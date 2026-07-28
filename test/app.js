@@ -110,10 +110,11 @@ function resolveByText(options, text) {
 function autocompleteMarkup({ key, label, placeholder, options, selectedId = "", name = key }) {
   const listId = `${key}-list`;
   const selected = options.find((option) => option.id === selectedId) || null;
+  const labelHtml = label ? `<label>${label}</label>` : "";
   return `
     <div class="field autocomplete-field">
-      <label>${label}</label>
-      <input type="text" name="${name}Label" value="${escapeHtml(selected ? selected.label : "")}" placeholder="${escapeHtml(placeholder)}" list="${listId}" data-autocomplete-key="${key}" />
+      ${labelHtml}
+      <input type="text" name="${name}Label" value="${escapeHtml(selected ? selected.label : "")}" placeholder="${escapeHtml(placeholder)}" list="${listId}" data-autocomplete-key="${key}" autocomplete="off" />
       <input type="hidden" name="${name}Id" value="${escapeHtml(selected?.id || selectedId || "")}" data-autocomplete-value="${key}" />
       <datalist id="${listId}">
         ${options.map((option) => `<option value="${escapeHtml(option.label)}"></option>`).join("")}
@@ -125,24 +126,108 @@ function autocompleteMarkup({ key, label, placeholder, options, selectedId = "",
 function syncAutocompleteField(input) {
   const key = input.dataset.autocompleteKey;
   const hidden = app.querySelector(`[data-autocomplete-value="${key}"]`);
-  if (!hidden) return;
+  if (!hidden) return null;
   const options = getAutocompleteOptions(key);
   const match = resolveByText(options, input.value);
   hidden.value = match?.id || "";
+  return match;
 }
 
 function getAutocompleteOptions(key) {
-  if (key === "enroll-course" || key === "teacher-course" || key === "grade-course") {
+  if (key === "enroll-course" || key === "teacher-course" || key === "grade-course" || key === "user-linked-course") {
     return db.courses.map((course) => ({ id: course.id, label: course.name }));
   }
-  if (key === "enroll-student" || key === "teacher-user" || key === "grade-student") {
-    return db.users.filter((user) => user.role === "student" || user.role === "teacher").map((user) => ({ id: user.id, label: userLabel(user) }));
+  if (key === "enroll-student") {
+    return db.users.filter((user) => user.role === "student").map((user) => ({ id: user.id, label: userLabel(user) }));
+  }
+  if (key === "teacher-user") {
+    return db.users.filter((user) => user.role === "teacher").map((user) => ({ id: user.id, label: userLabel(user) }));
+  }
+  if (key === "grade-student") {
+    const course = courseById(ui.courseId);
+    if (course) {
+      return course.studentIds
+        .map((id) => db.users.find((user) => user.id === id))
+        .filter(Boolean)
+        .map((user) => ({ id: user.id, label: userLabel(user) }));
+    }
+    return db.users.filter((user) => user.role === "student").map((user) => ({ id: user.id, label: userLabel(user) }));
   }
   if (key === "grade-item") {
     const course = courseById(ui.courseId) || db.courses[0] || null;
     return (course?.items || []).map((item) => ({ id: item.id, label: `${String(item.order).padStart(2, "0")} · ${item.title}` }));
   }
   return [];
+}
+
+function handleAutocompleteCommit(key, id) {
+  if (!id) return;
+  if (key === "grade-course") {
+    if (ui.courseId === id) return;
+    ui.courseId = id;
+    const course = courseById(id);
+    const stillValid = course?.studentIds.includes(ui.gradeStudentId);
+    ui.gradeStudentId = stillValid ? ui.gradeStudentId : course?.studentIds[0] || null;
+    ui.gradeItemId = course?.items[0]?.id || null;
+    markClean();
+    render();
+    return;
+  }
+  if (key === "grade-student") {
+    if (ui.gradeStudentId === id) return;
+    ui.gradeStudentId = id;
+    markClean();
+    render();
+  }
+}
+
+function bindAutocompleteInput(input) {
+  const key = input.dataset.autocompleteKey;
+
+  input.addEventListener("focus", () => {
+    input.dataset.restoreLabel = input.value;
+    // Vaciar el valor al abrir para que el datalist muestre todas las opciones
+    input.value = "";
+  });
+
+  input.addEventListener("blur", () => {
+    window.setTimeout(() => {
+      const options = getAutocompleteOptions(key);
+      const match = resolveByText(options, input.value);
+      const hidden = app.querySelector(`[data-autocomplete-value="${key}"]`);
+      if (match) {
+        input.value = match.label;
+        if (hidden) hidden.value = match.id;
+        handleAutocompleteCommit(key, match.id);
+        return;
+      }
+      const restore = input.dataset.restoreLabel || "";
+      const prev = resolveByText(options, restore);
+      if (prev) {
+        input.value = prev.label;
+        if (hidden) hidden.value = prev.id;
+      } else if (hidden?.value) {
+        const byId = options.find((option) => option.id === hidden.value);
+        input.value = byId ? byId.label : restore;
+      } else {
+        input.value = restore;
+      }
+    }, 150);
+  });
+
+  input.addEventListener("change", () => {
+    const match = syncAutocompleteField(input);
+    if (match) {
+      input.value = match.label;
+      handleAutocompleteCommit(key, match.id);
+    }
+    setDirty();
+  });
+
+  input.addEventListener("input", () => {
+    syncAutocompleteField(input);
+    setDirty();
+  });
 }
 
 function selectedCourseIds(form) {
@@ -184,17 +269,177 @@ function newNoteRows(notes = []) {
   return base.map((note, index) => noteRowMarkup(note, index)).join("");
 }
 
+function normalizeDb(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const users = Array.isArray(raw.users) ? raw.users : null;
+  const courses = Array.isArray(raw.courses) ? raw.courses : null;
+  const grades = Array.isArray(raw.grades) ? raw.grades : [];
+  if (!users || !courses) return null;
+  return {
+    version: Number(raw.version) || 1,
+    users,
+    courses: courses.map((course) => ({
+      ...course,
+      teacherIds: Array.isArray(course.teacherIds) ? course.teacherIds : [],
+      studentIds: Array.isArray(course.studentIds) ? course.studentIds : [],
+      items: Array.isArray(course.items) ? course.items : [],
+    })),
+    grades: grades.filter((grade) => grade && grade.courseId && grade.studentId && grade.itemId),
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+  };
+}
+
 function loadDb() {
-  const stored = safeParse(localStorage.getItem(DB_KEY));
-  if (stored && stored.users && stored.courses) return stored;
+  const stored = normalizeDb(safeParse(localStorage.getItem(DB_KEY)));
+  if (stored) return stored;
   const seeded = buildInitialDb(window.SCHOOL_SEED);
   localStorage.setItem(DB_KEY, JSON.stringify(seeded));
   return seeded;
 }
 
 function saveDb(nextDb) {
-  db = nextDb;
-  localStorage.setItem(DB_KEY, JSON.stringify(db));
+  const normalized = normalizeDb({ ...nextDb, updatedAt: new Date().toISOString() }) || nextDb;
+  db = normalized;
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+  } catch (error) {
+    toast("No se pudo guardar en el navegador (almacenamiento lleno o bloqueado).");
+    console.error(error);
+  }
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportDbJson() {
+  const payload = {
+    ...db,
+    exportedAt: new Date().toISOString(),
+    brand: BRAND_NAME,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  downloadBlob(`jessika-ruiz-academia-backup-${stamp}.json`, blob);
+  toast("Copia de seguridad JSON descargada.");
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function rowsToCsv(headers, rows) {
+  const lines = [headers.map(csvEscape).join(",")];
+  rows.forEach((row) => lines.push(row.map(csvEscape).join(",")));
+  return lines.join("\n");
+}
+
+function exportDbCsv() {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+
+  const usersCsv = rowsToCsv(
+    ["id", "fullName", "username", "role", "documentId", "email", "phone", "password"],
+    db.users.map((user) => [user.id, user.fullName, user.username, user.role, user.documentId || "", user.email || "", user.phone || "", user.password || ""]),
+  );
+
+  const coursesCsv = rowsToCsv(
+    ["id", "name", "description", "teacherIds", "studentIds", "itemsCount"],
+    db.courses.map((course) => [
+      course.id,
+      course.name,
+      course.description || "",
+      (course.teacherIds || []).join("|"),
+      (course.studentIds || []).join("|"),
+      (course.items || []).length,
+    ]),
+  );
+
+  const itemsCsv = rowsToCsv(
+    ["courseId", "courseName", "itemId", "order", "title", "kind"],
+    db.courses.flatMap((course) =>
+      (course.items || []).map((item) => [course.id, course.name, item.id, item.order, item.title, item.kind]),
+    ),
+  );
+
+  const gradesCsv = rowsToCsv(
+    ["id", "courseId", "courseName", "studentId", "studentName", "itemId", "itemTitle", "notes", "average", "updatedBy", "updatedAt"],
+    db.grades.map((grade) => {
+      const course = courseById(grade.courseId);
+      const student = db.users.find((user) => user.id === grade.studentId);
+      const item = course ? itemById(course, grade.itemId) : null;
+      const avg = gradeAverage(grade);
+      return [
+        grade.id,
+        grade.courseId,
+        course?.name || "",
+        grade.studentId,
+        student?.fullName || "",
+        grade.itemId,
+        item?.title || "",
+        (grade.notes || []).map((note) => note.score).join("|"),
+        avg === null ? "" : formatScore(avg),
+        grade.updatedBy || "",
+        grade.updatedAt || "",
+      ];
+    }),
+  );
+
+  const enrollmentsCsv = rowsToCsv(
+    ["courseId", "courseName", "userId", "fullName", "role", "membership"],
+    db.courses.flatMap((course) => {
+      const students = (course.studentIds || []).map((id) => {
+        const user = db.users.find((entry) => entry.id === id);
+        return [course.id, course.name, id, user?.fullName || "", user?.role || "student", "student"];
+      });
+      const teachers = (course.teacherIds || []).map((id) => {
+        const user = db.users.find((entry) => entry.id === id);
+        return [course.id, course.name, id, user?.fullName || "", user?.role || "teacher", "teacher"];
+      });
+      return [...students, ...teachers];
+    }),
+  );
+
+  // Empaquetar varias hojas como un ZIP no es viable sin librería; se descargan archivos CSV separados.
+  downloadBlob(`usuarios-${stamp}.csv`, new Blob(["\uFEFF" + usersCsv], { type: "text/csv;charset=utf-8" }));
+  downloadBlob(`cursos-${stamp}.csv`, new Blob(["\uFEFF" + coursesCsv], { type: "text/csv;charset=utf-8" }));
+  downloadBlob(`temario-${stamp}.csv`, new Blob(["\uFEFF" + itemsCsv], { type: "text/csv;charset=utf-8" }));
+  downloadBlob(`calificaciones-${stamp}.csv`, new Blob(["\uFEFF" + gradesCsv], { type: "text/csv;charset=utf-8" }));
+  downloadBlob(`matriculas-${stamp}.csv`, new Blob(["\uFEFF" + enrollmentsCsv], { type: "text/csv;charset=utf-8" }));
+  toast("Archivos CSV descargados (usuarios, cursos, temario, calificaciones, matrículas).");
+}
+
+function importDbJson(file) {
+  if (!confirmDiscardChanges()) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = safeParse(String(reader.result || ""));
+      const normalized = normalizeDb(parsed);
+      if (!normalized) {
+        toast("El archivo JSON no tiene la estructura esperada (users, courses).");
+        return;
+      }
+      if (!confirm(`Importar respaldo con ${normalized.users.length} usuarios, ${normalized.courses.length} cursos y ${normalized.grades.length} calificaciones?`)) return;
+      saveDb(normalized);
+      saveSession(null);
+      resetUiState();
+      toast("Base de datos importada. Inicia sesión de nuevo.");
+      render();
+    } catch (error) {
+      toast("No se pudo leer el archivo JSON.");
+      console.error(error);
+    }
+  };
+  reader.readAsText(file);
 }
 
 function loadSession() {
@@ -339,10 +584,12 @@ function setCourse(courseId) {
   ui.courseId = courseId;
   const course = courseById(courseId);
   if (course) {
-    const defaultStudent = course.studentIds[0] || null;
-    const defaultItem = course.items[0]?.id || null;
-    ui.gradeStudentId = ui.gradeStudentId || defaultStudent;
-    ui.gradeItemId = ui.gradeItemId || defaultItem;
+    const stillValid = course.studentIds.includes(ui.gradeStudentId);
+    ui.gradeStudentId = stillValid ? ui.gradeStudentId : course.studentIds[0] || null;
+    ui.gradeItemId = course.items[0]?.id || null;
+  } else {
+    ui.gradeStudentId = null;
+    ui.gradeItemId = null;
   }
   render();
 }
@@ -370,28 +617,107 @@ function login(form) {
   render();
 }
 
+function digitsOnly(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatDocumentId(raw) {
+  const digits = digitsOnly(raw);
+  if (!digits) return "";
+  // Formato colombiano con puntos de miles: 1.234.567
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+function credentialsFromDocument(raw) {
+  const digits = digitsOnly(raw);
+  return {
+    digits,
+    formatted: formatDocumentId(digits),
+    username: digits,
+    password: digits,
+  };
+}
+
+function bindDocumentIdField(input) {
+  if (!input) return;
+  const form = input.closest("form");
+  const usernameInput = form?.querySelector('[name="username"]');
+  const passwordInput = form?.querySelector('[name="password"]');
+  const isCreate = !form?.querySelector('[name="userId"]')?.value;
+
+  const syncCredentials = () => {
+    const creds = credentialsFromDocument(input.value);
+    input.value = creds.formatted;
+    if (!isCreate) return;
+    // Solo autocompleta usuario/clave al crear, si están vacíos o aún coinciden con el documento anterior
+    const prevDigits = input.dataset.prevDigits || "";
+    if (usernameInput && (!usernameInput.value || usernameInput.value === prevDigits)) {
+      usernameInput.value = creds.username;
+    }
+    if (passwordInput && (!passwordInput.value || passwordInput.value === prevDigits)) {
+      passwordInput.value = creds.password;
+    }
+    input.dataset.prevDigits = creds.digits;
+  };
+
+  input.addEventListener("blur", () => {
+    syncCredentials();
+    setDirty();
+  });
+  input.addEventListener("input", () => {
+    // Mientras escribe: permitir dígitos; al blur se formatea
+    setDirty();
+  });
+  input.addEventListener("change", syncCredentials);
+}
+
 function saveUser(form) {
   const data = new FormData(form);
   const userId = String(data.get("userId") || "");
   const fullName = String(data.get("fullName") || "").trim();
-  const username = String(data.get("username") || "").trim();
-  const password = String(data.get("password") || "").trim();
   const role = String(data.get("role") || "student");
-  const documentId = String(data.get("documentId") || "").trim();
+  const documentId = formatDocumentId(data.get("documentId") || "");
+  const bareDoc = digitsOnly(documentId);
+  let username = String(data.get("username") || "").trim();
+  let password = String(data.get("password") || "").trim();
   const email = String(data.get("email") || "").trim();
   const phone = String(data.get("phone") || "").trim();
-  const courseIds = selectedCourseIds(form);
+  const linkedCourseId = String(data.get("linkedCourseId") || "").trim();
 
-  if (!fullName || !username || !password) {
-    toast("Completa nombre, usuario y contraseña.");
+  // Por defecto usuario y contraseña = documento sin separadores
+  if (!username && bareDoc) username = bareDoc;
+  if (!password && bareDoc) password = bareDoc;
+
+  if (!role || !["student", "teacher", "admin"].includes(role)) {
+    toast("Selecciona un rol válido.");
     return;
   }
-  if (role === "student" && !documentId) {
+  if (role === "student" && !bareDoc) {
     toast("El documento de identidad es obligatorio para estudiantes.");
     return;
   }
+  if (!fullName || !username || !password) {
+    toast("Completa documento, nombre, usuario y contraseña.");
+    return;
+  }
+  if (password.length < 4) {
+    toast("La contraseña debe tener al menos 4 caracteres.");
+    return;
+  }
+  if ((role === "student" || role === "teacher") && !linkedCourseId && !userId) {
+    toast(role === "student" ? "Selecciona el curso a matricular." : "Selecciona el curso a asignar al docente.");
+    return;
+  }
+  if (linkedCourseId && !courseById(linkedCourseId)) {
+    toast("El curso seleccionado no existe.");
+    return;
+  }
   if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase() && user.id !== userId)) {
-    toast("Ese usuario ya existe.");
+    toast("Ese nombre de usuario ya existe.");
+    return;
+  }
+  if (bareDoc && db.users.some((user) => digitsOnly(user.documentId) === bareDoc && user.id !== userId)) {
+    toast("Ya existe un usuario con ese documento de identidad.");
     return;
   }
 
@@ -400,14 +726,32 @@ function saveUser(form) {
     : [{ id: uid("user"), fullName, username, password, role, documentId, email, phone }, ...db.users];
 
   const finalUser = nextUsers.find((user) => user.id === (userId || nextUsers[0].id)) || null;
-  const updatedCourses = syncUserCourseMembership(db.courses, finalUser?.id || userId || nextUsers[0].id, role, courseIds);
+  const courseIds = linkedCourseId ? [linkedCourseId] : [];
+  const updatedCourses = userId && !linkedCourseId
+    ? syncUserCourseMembershipKeep(db.courses, finalUser.id, role)
+    : syncUserCourseMembership(db.courses, finalUser.id, role, courseIds);
 
   saveDb({ ...db, users: nextUsers, courses: updatedCourses });
-  applyUserCourseDefaults(finalUser?.id || userId || nextUsers[0].id, role, courseIds);
   ui.editUserId = null;
   markClean();
   toast(userId ? "Usuario actualizado." : "Usuario creado.");
   render();
+}
+
+function syncUserCourseMembershipKeep(courses, userId, role) {
+  return courses.map((course) => {
+    const nextCourse = { ...course };
+    // Si cambió de rol, limpiar membresía incompatible
+    if (role === "admin") {
+      nextCourse.studentIds = course.studentIds.filter((id) => id !== userId);
+      nextCourse.teacherIds = course.teacherIds.filter((id) => id !== userId);
+    } else if (role === "student") {
+      nextCourse.teacherIds = course.teacherIds.filter((id) => id !== userId);
+    } else if (role === "teacher") {
+      nextCourse.studentIds = course.studentIds.filter((id) => id !== userId);
+    }
+    return nextCourse;
+  });
 }
 
 function syncUserCourseMembership(courses, userId, role, courseIds) {
@@ -415,20 +759,41 @@ function syncUserCourseMembership(courses, userId, role, courseIds) {
     const nextCourse = { ...course };
     nextCourse.studentIds = course.studentIds.filter((id) => id !== userId);
     nextCourse.teacherIds = course.teacherIds.filter((id) => id !== userId);
-    if (role === "student" && courseIds.includes(course.id)) nextCourse.studentIds = [...nextCourse.studentIds, userId];
-    if (role === "teacher" && courseIds.includes(course.id)) nextCourse.teacherIds = [...nextCourse.teacherIds, userId];
+    if (role === "student" && courseIds.includes(course.id)) {
+      nextCourse.studentIds = [...nextCourse.studentIds, userId];
+    }
+    if (role === "teacher" && courseIds.includes(course.id)) {
+      // Un solo docente por curso
+      nextCourse.teacherIds = [userId];
+    }
     return nextCourse;
   });
 }
 
-function applyUserCourseDefaults(userId, role, courseIds) {
-  if (!userId) return;
-  if (role === "student" || role === "teacher") {
-    const assignForm = app.querySelector(role === "student" ? "[data-form='assign-student-course']" : "[data-form='assign-teacher-course']");
-    if (assignForm) {
-      assignForm.reset();
-    }
+function changeOwnPassword(form) {
+  const data = new FormData(form);
+  const currentPassword = String(data.get("currentPassword") || "").trim();
+  const newPassword = String(data.get("newPassword") || "").trim();
+  const confirmPassword = String(data.get("confirmPassword") || "").trim();
+  const user = currentUser();
+  if (!user) return;
+  if (user.password !== currentPassword) {
+    toast("La contraseña actual no es correcta.");
+    return;
   }
+  if (newPassword.length < 6) {
+    toast("La nueva contraseña debe tener al menos 6 caracteres.");
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    toast("La confirmación no coincide.");
+    return;
+  }
+  const nextUsers = db.users.map((entry) => (entry.id === user.id ? { ...entry, password: newPassword } : entry));
+  saveDb({ ...db, users: nextUsers });
+  markClean();
+  toast("Contraseña actualizada.");
+  render();
 }
 
 function saveCourse(form) {
@@ -436,9 +801,17 @@ function saveCourse(form) {
   const courseId = String(data.get("courseId") || "");
   const name = String(data.get("name") || "").trim();
   const description = String(data.get("description") || "").trim();
+  const teacherId = String(data.get("teacherId") || "").trim();
   if (!name) {
     toast("Escribe un nombre de curso.");
     return;
+  }
+  if (teacherId) {
+    const teacher = db.users.find((user) => user.id === teacherId);
+    if (!teacher || teacher.role !== "teacher") {
+      toast("Selecciona un docente válido.");
+      return;
+    }
   }
   const id = courseId || normalize(name);
   if (db.courses.some((course) => (course.id === id || course.name.toLowerCase() === name.toLowerCase()) && course.id !== courseId)) {
@@ -446,9 +819,19 @@ function saveCourse(form) {
     return;
   }
 
+  const teacherIds = teacherId ? [teacherId] : [];
   const nextCourses = courseId
-    ? db.courses.map((course) => (course.id === courseId ? { ...course, name, description } : course))
-    : [{ id, name, description, teacherIds: [], studentIds: [], items: [] }, ...db.courses];
+    ? db.courses.map((course) => {
+        if (course.id !== courseId) return course;
+        return {
+          ...course,
+          name,
+          description,
+          // Select explícito: vacío quita docente; valor fija el único docente del curso
+          teacherIds,
+        };
+      })
+    : [{ id, name, description, teacherIds, studentIds: [], items: [] }, ...db.courses];
 
   saveDb({ ...db, courses: nextCourses });
   ui.courseId = id;
@@ -500,22 +883,77 @@ function assignCourse(form) {
     toast("Selecciona usuario y curso.");
     return;
   }
+  if (role === "teacher" && user.role !== "teacher" && user.role !== "admin") {
+    toast("Solo se puede asignar un usuario con rol docente.");
+    return;
+  }
+  if (role === "student" && user.role !== "student") {
+    toast("Solo se puede matricular un usuario con rol estudiante.");
+    return;
+  }
   const nextCourses = db.courses.map((entry) => {
     if (entry.id !== course.id) return entry;
-    const key = role === "teacher" ? "teacherIds" : "studentIds";
-    if (entry[key].includes(user.id)) return entry;
-    return { ...entry, [key]: [...entry[key], user.id] };
+    if (role === "teacher") {
+      // Un solo docente por curso: reemplaza al anterior
+      return { ...entry, teacherIds: [user.id] };
+    }
+    if (entry.studentIds.includes(user.id)) return entry;
+    return { ...entry, studentIds: [...entry.studentIds, user.id] };
   });
   saveDb({ ...db, courses: nextCourses });
   markClean();
-  toast(role === "teacher" ? "Docente asignado." : "Estudiante matriculado.");
+  toast(role === "teacher" ? "Docente asignado (único por curso)." : "Estudiante matriculado.");
   render();
+}
+
+function normalizeScoreInput(raw) {
+  let text = String(raw ?? "").trim();
+  if (!text) return { empty: true, value: null, display: "" };
+
+  // Coma decimal → punto
+  text = text.replace(/,/g, ".");
+  // Quitar espacios y símbolos no numéricos excepto punto
+  text = text.replace(/[^\d.]/g, "");
+
+  // Varios puntos: conservar el primero
+  const parts = text.split(".");
+  if (parts.length > 2) text = `${parts[0]}.${parts.slice(1).join("")}`;
+
+  // Casos tipo "45" → 4.5, "38" → 3.8 (dos dígitos sin decimal, interpretados como décimas)
+  if (/^\d{2}$/.test(text)) {
+    text = `${text[0]}.${text[1]}`;
+  }
+
+  let value = Number(text);
+  if (Number.isNaN(value)) return { empty: false, value: null, display: text, error: true };
+
+  // Si quedó > 5 por un enter mal (ej. 45 sin corregir), intentar /10 una vez
+  if (value > 5 && value <= 50) {
+    value = Math.round((value / 10) * 10) / 10;
+    text = String(value);
+  }
+
+  // Escala 0.0 – 5.0 (0 se usa cuando el campo quedó vacío al guardar)
+  if (value < 0 || value > 5) {
+    return { empty: false, value: null, display: text, error: true };
+  }
+
+  // Redondeo a 1 decimal
+  value = Math.round(value * 10) / 10;
+  return { empty: false, value, display: value.toFixed(1), error: false };
+}
+
+function parseSingleScore(text) {
+  const result = normalizeScoreInput(text);
+  if (result.empty) return { ok: true, value: null, empty: true };
+  if (result.error || result.value === null) return { ok: false, value: null, empty: false };
+  return { ok: true, value: result.value, empty: false };
 }
 
 function saveGrade(form) {
   const data = new FormData(form);
-  const courseId = String(data.get("courseId") || "");
-  const studentId = String(data.get("studentId") || "");
+  const courseId = String(data.get("courseId") || ui.courseId || "");
+  const studentId = String(data.get("studentId") || ui.gradeStudentId || "");
   const itemIds = data.getAll("itemId[]").map((value) => String(value || ""));
   const notesTexts = data.getAll("notesText[]").map((value) => String(value || "").trim());
 
@@ -524,45 +962,71 @@ function saveGrade(form) {
     return;
   }
 
-  const parsedRows = notesTexts.map((text, index) => ({
-    itemId: itemIds[index],
-    notes: parseGradeText(text),
-  }));
-  if (parsedRows.some((row) => row.notes === null)) {
-    toast("Revisa las notas: usa valores entre 0 y 5 separados por coma.");
+  const parsedRows = notesTexts.map((text, index) => {
+    const parsed = parseSingleScore(text);
+    return { itemId: itemIds[index], parsed, raw: text };
+  });
+
+  if (parsedRows.some((row) => !row.parsed.ok)) {
+    toast("Cada clase admite una sola nota entre 0.0 y 5.0 (usa punto o coma decimal).");
     return;
   }
 
+  // Campos vacíos → 0.0 para que el promedio del curso quede completo.
+  // Reemplaza solo las notas de este estudiante en este curso.
   const nextGrades = db.grades.filter((grade) => !(grade.courseId === courseId && grade.studentId === studentId));
+  let filledAsZero = 0;
   parsedRows.forEach((row) => {
     if (!row.itemId) return;
-    if (!row.notes.length) return;
+    const score = row.parsed.empty || row.parsed.value === null ? 0 : row.parsed.value;
+    if (row.parsed.empty || row.parsed.value === null) filledAsZero += 1;
     nextGrades.unshift({
       id: uid("grade"),
       courseId,
       studentId,
       itemId: row.itemId,
-      notes: row.notes.map((score, index) => ({ id: uid("note"), label: `Calificación ${index + 1}`, score })),
+      notes: [{ id: uid("note"), label: "Calificación", score }],
       updatedBy: currentUser()?.id || null,
       updatedAt: new Date().toISOString(),
     });
   });
 
   saveDb({ ...db, grades: nextGrades });
+  ui.courseId = courseId;
+  ui.gradeStudentId = studentId;
   markClean();
-  toast("Notas guardadas.");
+  toast(filledAsZero
+    ? `Notas guardadas. ${filledAsZero} clase(s) vacía(s) se registraron como 0.0.`
+    : "Notas guardadas.");
   render();
 }
 
-function parseGradeText(text) {
-  if (!text) return [];
-  const values = text
-    .split(/[,;\n]+/)
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .map((value) => Number(value));
-  if (values.some((value) => Number.isNaN(value) || value < 0 || value > 5)) return null;
-  return values;
+function bindScoreInputs() {
+  app.querySelectorAll('input[name="notesText[]"]').forEach((input) => {
+    input.addEventListener("blur", () => {
+      const result = normalizeScoreInput(input.value);
+      if (result.empty) {
+        input.value = "";
+        return;
+      }
+      if (result.error) {
+        input.classList.add("is-invalid");
+        toast("Nota inválida: debe estar entre 0.0 y 5.0.");
+        return;
+      }
+      input.classList.remove("is-invalid");
+      input.value = result.display;
+    });
+    input.addEventListener("input", () => {
+      // Sustituir coma por punto mientras escribe
+      if (input.value.includes(",")) {
+        const pos = input.selectionStart;
+        input.value = input.value.replace(/,/g, ".");
+        if (typeof pos === "number") input.setSelectionRange(pos, pos);
+      }
+      setDirty();
+    });
+  });
 }
 
 function removeGradeNoteRow(button) {
@@ -591,6 +1055,11 @@ function removeUser(userId) {
     toast("No puedes eliminar tu propio usuario desde esta sesión.");
     return;
   }
+  const target = db.users.find((user) => user.id === userId);
+  if (!target) return;
+  if (!confirm(`¿Eliminar al usuario "${target.fullName}" (@${target.username})?\n\nSe quitarán sus matrículas, asignaciones y calificaciones. Esta acción no se puede deshacer.`)) {
+    return;
+  }
   const nextUsers = db.users.filter((user) => user.id !== userId);
   const nextGrades = db.grades.filter((grade) => grade.studentId !== userId && grade.updatedBy !== userId);
   const nextCourses = db.courses.map((course) => ({
@@ -604,7 +1073,12 @@ function removeUser(userId) {
 }
 
 function removeCourse(courseId) {
-  const nextCourses = db.courses.filter((course) => course.id !== courseId);
+  const course = courseById(courseId);
+  if (!course) return;
+  if (!confirm(`¿Eliminar el curso "${course.name}"?\n\nSe borrarán el temario, matrículas y todas las calificaciones asociadas. Esta acción no se puede deshacer.`)) {
+    return;
+  }
+  const nextCourses = db.courses.filter((entry) => entry.id !== courseId);
   const nextGrades = db.grades.filter((grade) => grade.courseId !== courseId);
   saveDb({ ...db, courses: nextCourses, grades: nextGrades });
   ui.courseId = nextCourses[0]?.id || null;
@@ -613,10 +1087,15 @@ function removeCourse(courseId) {
 }
 
 function removeItem(courseId, itemId) {
-  const nextCourses = db.courses.map((course) => {
-    if (course.id !== courseId) return course;
-    const items = course.items.filter((item) => item.id !== itemId).map((item, index) => ({ ...item, order: index + 1 }));
-    return { ...course, items };
+  const course = courseById(courseId);
+  const item = course ? itemById(course, itemId) : null;
+  if (!confirm(`¿Eliminar "${item?.title || "esta clase"}"?\n\nTambién se borrarán las notas de esa actividad. Esta acción no se puede deshacer.`)) {
+    return;
+  }
+  const nextCourses = db.courses.map((entry) => {
+    if (entry.id !== courseId) return entry;
+    const items = entry.items.filter((row) => row.id !== itemId).map((row, index) => ({ ...row, order: index + 1 }));
+    return { ...entry, items };
   });
   const nextGrades = db.grades.filter((grade) => grade.itemId !== itemId);
   saveDb({ ...db, courses: nextCourses, grades: nextGrades });
@@ -733,7 +1212,11 @@ function shellView(user) {
           <div class="pill">Rol: ${roleLabel(user.role)}</div>
           <div class="pill">Cursos visibles: ${visible.length}</div>
           <button class="btn btn--ghost" data-action="logout">Cerrar sesión</button>
-          ${user.role === "admin" ? '<button class="btn btn--ghost" data-action="reset-demo">Restablecer datos</button>' : ""}
+          ${user.role === "admin" ? `
+            <button class="btn btn--ghost" data-action="export-json">Exportar JSON</button>
+            <button class="btn btn--ghost" data-action="import-json">Importar JSON</button>
+            <button class="btn btn--ghost" data-action="reset-demo">Restablecer datos</button>
+          ` : ""}
         </div>
       </aside>
       <main class="main">
@@ -781,9 +1264,6 @@ function overviewView(user, selectedCourse, visible) {
   const summaries = user.role === "student" ? studentSummary(user) : null;
   const visibleGrades = db.grades.filter((grade) => visible.some((course) => course.id === grade.courseId));
   const assignedStudents = visible.reduce((sum, course) => sum + course.studentIds.length, 0);
-  const pendingItems = summaries
-    ? summaries.summaries.reduce((sum, entry) => sum + (entry.summary.totalCount - entry.summary.gradedCount), 0)
-    : 0;
   return `
     <section class="card card--soft">
       <div class="card__body">
@@ -814,6 +1294,48 @@ function overviewView(user, selectedCourse, visible) {
         ${selectedCourse ? courseSnapshot(selectedCourse, user) : '<p class="muted" style="margin-top: 16px;">No hay cursos asignados a este usuario.</p>'}
       </div>
     </section>
+
+    <section class="grid grid--split" style="margin-top: 18px;">
+      <article class="card">
+        <div class="card__header">
+          <div>
+            <h2 class="card__title">Cambiar mi contraseña</h2>
+            <p class="card__subtitle">Actualiza la clave de tu cuenta @${escapeHtml(user.username)}.</p>
+          </div>
+        </div>
+        <div class="card__body">
+          <form class="form" data-form="change-password">
+            <div class="field"><label>Contraseña actual</label><input name="currentPassword" type="password" required autocomplete="current-password" /></div>
+            <div class="field"><label>Nueva contraseña</label><input name="newPassword" type="password" required minlength="6" autocomplete="new-password" /></div>
+            <div class="field"><label>Confirmar nueva contraseña</label><input name="confirmPassword" type="password" required minlength="6" autocomplete="new-password" /></div>
+            <button class="btn btn--gold" type="submit">Guardar contraseña</button>
+          </form>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card__header">
+          <div>
+            <h2 class="card__title">Accesos rápidos</h2>
+            <p class="card__subtitle">Entrar como otro usuario de prueba (demo).</p>
+          </div>
+        </div>
+        <div class="card__body">
+          <div class="list">
+            ${db.users.slice(0, 12).map((entry) => `
+              <div class="list__item">
+                <div class="row" style="justify-content: space-between;">
+                  <div>
+                    <div class="list__title">${escapeHtml(entry.fullName)}</div>
+                    <div class="list__meta">@${escapeHtml(entry.username)} · ${roleLabel(entry.role)}</div>
+                  </div>
+                  <button class="btn btn--ghost" type="button" data-action="quick-login" data-user-id="${entry.id}">Entrar</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      </article>
+    </section>
   `;
 }
 
@@ -843,76 +1365,72 @@ function courseSnapshot(course, user) {
 
 function usersView() {
   const selectedUser = ui.editUserId ? db.users.find((user) => user.id === ui.editUserId) || null : null;
-  const roleCourseMode = selectedUser?.role === "teacher" ? "asignar" : "matricular";
+  const initialRole = selectedUser?.role || "student";
+  const assignedCourse = selectedUser
+    ? db.courses.find((course) => course.studentIds.includes(selectedUser.id) || course.teacherIds.includes(selectedUser.id))
+    : null;
   return `
-    <section class="grid grid--split">
-      <article class="card">
-        <div class="card__header">
-          <div>
-            <h2 class="card__title">${selectedUser ? "Editar usuario" : "Crear usuario"}</h2>
-            <p class="card__subtitle">Documento, contacto y cursos vinculados al guardar.</p>
+    <section class="card">
+      <div class="card__header">
+        <div>
+          <h2 class="card__title">${selectedUser ? "Editar usuario" : "Crear usuario"}</h2>
+          <p class="card__subtitle">Elige primero el rol; luego se habilita matrícula o asignación de curso.</p>
+        </div>
+      </div>
+      <div class="card__body">
+        <form class="form" data-form="save-user">
+          <input type="hidden" name="userId" value="${selectedUser?.id || ""}" />
+          <div class="field">
+            <label>Rol</label>
+            <select name="role" data-user-role-select>
+              <option value="student" ${initialRole === "student" ? "selected" : ""}>Estudiante</option>
+              <option value="teacher" ${initialRole === "teacher" ? "selected" : ""}>Docente</option>
+              <option value="admin" ${initialRole === "admin" ? "selected" : ""}>Administrador</option>
+            </select>
           </div>
-        </div>
-        <div class="card__body">
-          <form class="form" data-form="save-user">
-            <input type="hidden" name="userId" value="${selectedUser?.id || ""}" />
-            <div class="field"><label>Nombre completo</label><input name="fullName" value="${escapeHtml(selectedUser?.fullName || "")}" required /></div>
-            <div class="field"><label>Usuario</label><input name="username" value="${escapeHtml(selectedUser?.username || "")}" required /></div>
-            <div class="field"><label>Contraseña</label><input name="password" type="text" value="${escapeHtml(selectedUser?.password || "")}" required /></div>
-            <div class="field">
-              <label>Rol</label>
-              <select name="role">
-                <option value="student" ${selectedUser?.role === "student" ? "selected" : ""}>Estudiante</option>
-                <option value="teacher" ${selectedUser?.role === "teacher" ? "selected" : ""}>Docente</option>
-                <option value="admin" ${selectedUser?.role === "admin" ? "selected" : ""}>Administrador</option>
-              </select>
-            </div>
-            <div class="field"><label>Documento de identidad</label><input name="documentId" value="${escapeHtml(selectedUser?.documentId || "")}" placeholder="CC, TI, pasaporte..." /></div>
-            <div class="split">
-              <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(selectedUser?.email || "")}" placeholder="opcional" /></div>
-              <div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(selectedUser?.phone || "")}" placeholder="opcional" /></div>
-            </div>
-            <div class="field">
-              <label>Cursos ${selectedUser?.role === "teacher" ? "a asignar" : "a matricular"}</label>
-              ${renderCourseChecklist(selectedUser ? visibleCourses(selectedUser).map((course) => course.id) : [], roleCourseMode)}
-            </div>
-            <div class="toolbar">
-              <button class="btn btn--gold" type="submit">${selectedUser ? "Guardar cambios" : "Crear usuario"}</button>
-              <button class="btn btn--ghost" type="button" data-clear-user-form>+ Nuevo</button>
-            </div>
-          </form>
-        </div>
-      </article>
-      <article class="card">
-        <div class="card__header">
-          <div>
-            <h2 class="card__title">Accesos rápidos</h2>
-            <p class="card__subtitle">Usuarios de prueba para entrar sin teclear.</p>
+          <div class="field" data-role-field="document">
+            <label>Documento de identidad</label>
+            <input name="documentId" value="${escapeHtml(selectedUser?.documentId || "")}" placeholder="1234567890 o 1.234.567.890" inputmode="numeric" data-document-id />
+            <div class="helper">Se formatea con puntos (1.234.567). Usuario y contraseña por defecto = documento sin puntos.</div>
           </div>
-        </div>
-        <div class="card__body">
-          <div class="list">
-            ${db.users.map((user) => `
-              <div class="list__item">
-                <div class="row" style="justify-content: space-between;">
-                  <div>
-                    <div class="list__title">${user.fullName}</div>
-                    <div class="list__meta">@${user.username} · ${roleLabel(user.role)}</div>
-                  </div>
-                  <button class="btn btn--ghost" type="button" data-action="quick-login" data-user-id="${user.id}">Entrar</button>
-                </div>
-              </div>
-            `).join("")}
+          <div class="field"><label>Nombre completo</label><input name="fullName" value="${escapeHtml(selectedUser?.fullName || "")}" required /></div>
+          <div class="field"><label>Usuario</label><input name="username" value="${escapeHtml(selectedUser?.username || "")}" required autocomplete="off" /></div>
+          <div class="field"><label>Contraseña</label><input name="password" type="text" value="${escapeHtml(selectedUser?.password || "")}" required minlength="4" autocomplete="off" /></div>
+          <div class="split">
+            <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(selectedUser?.email || "")}" placeholder="opcional" /></div>
+            <div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(selectedUser?.phone || "")}" placeholder="opcional" /></div>
           </div>
-        </div>
-      </article>
+          <div class="field" data-role-field="course" style="${initialRole === "admin" ? "display:none;" : ""}">
+            <label data-course-label>${initialRole === "teacher" ? "Curso a asignar (un docente por curso)" : "Curso a matricular"}</label>
+            ${autocompleteMarkup({
+              key: "user-linked-course",
+              label: "",
+              placeholder: "Escribe o elige el curso",
+              options: db.courses.map((item) => ({ id: item.id, label: item.name })),
+              selectedId: assignedCourse?.id || "",
+              name: "linkedCourse",
+            })}
+            <div class="helper" data-course-helper>
+              ${initialRole === "teacher"
+                ? "Al asignar, este docente quedará como el único del curso."
+                : selectedUser
+                  ? "Si eliges un curso, se reasignará la matrícula principal. Puedes matricular más cursos desde Cursos."
+                  : "Obligatorio al crear un estudiante."}
+            </div>
+          </div>
+          <div class="toolbar">
+            <button class="btn btn--gold" type="submit">${selectedUser ? "Guardar cambios" : "Crear usuario"}</button>
+            <button class="btn btn--ghost" type="button" data-clear-user-form>+ Nuevo</button>
+          </div>
+        </form>
+      </div>
     </section>
 
     <section class="card" style="margin-top: 18px;">
       <div class="card__header">
         <div>
           <h2 class="card__title">Administración en tabla</h2>
-          <p class="card__subtitle">Edita por categoría y guarda cada bloque de una sola vez.</p>
+          <p class="card__subtitle">Edita nombre, contacto y contraseña por categoría. Guarda cada bloque de una vez.</p>
         </div>
       </div>
       <div class="card__body">
@@ -928,24 +1446,25 @@ function usersView() {
     </section>
 
     ${ui.usersTab === "students" ? renderUsersBulkTable("student", "Estudiantes", "Nombre, documento, contacto y contraseña editables en bloque.") : ""}
-    ${ui.usersTab === "teachers" ? renderUsersBulkTable("teacher", "Docentes", "Información base editable en una sola tabla.") : ""}
-    ${ui.usersTab === "admins" ? renderUsersBulkTable("admin", "Administradores", "Acceso y datos base de los administradores.") : ""}
+    ${ui.usersTab === "teachers" ? renderUsersBulkTable("teacher", "Docentes", "Información base y contraseña editables en una sola tabla.") : ""}
+    ${ui.usersTab === "admins" ? renderUsersBulkTable("admin", "Administradores", "Puedes cambiar la contraseña de cada administrador desde esta tabla.") : ""}
     ${ui.usersTab === "by-course" ? renderCourseRosterByCourse() : ""}
   `;
 }
 
 function coursesView(user, selectedCourse, visible) {
   const teachers = db.users.filter((item) => item.role === "teacher");
-  const students = db.users.filter((item) => item.role === "student");
   const course = selectedCourse || visible[0] || db.courses[0] || null;
   const editingCourse = ui.editCourseId ? db.courses.find((item) => item.id === ui.editCourseId) || null : null;
+  const currentTeacherId = editingCourse?.teacherIds?.[0] || "";
+  const courseList = user.role === "admin" ? db.courses : visible;
   return `
     <section class="grid grid--split split--top">
       <article class="card">
         <div class="card__header">
           <div>
             <h2 class="card__title">${editingCourse ? "Editar curso" : "Crear curso"}</h2>
-            <p class="card__subtitle">Cursos, temarios, matrículas y docentes.</p>
+            <p class="card__subtitle">Define el curso y asigna su docente (uno por curso).</p>
           </div>
         </div>
         <div class="card__body">
@@ -953,6 +1472,16 @@ function coursesView(user, selectedCourse, visible) {
             <input type="hidden" name="courseId" value="${editingCourse?.id || ""}" />
             <div class="field"><label>Nombre del curso</label><input name="name" value="${escapeHtml(editingCourse?.name || "")}" required /></div>
             <div class="field"><label>Descripción</label><textarea name="description" placeholder="Breve descripción">${escapeHtml(editingCourse?.description || "")}</textarea></div>
+            <div class="field">
+              <label>Docente a cargo</label>
+              <select name="teacherId">
+                <option value="">Sin docente asignado</option>
+                ${teachers.map((teacher) => `
+                  <option value="${teacher.id}" ${currentTeacherId === teacher.id ? "selected" : ""}>${escapeHtml(teacher.fullName)} @${escapeHtml(teacher.username)}</option>
+                `).join("")}
+              </select>
+              <div class="helper">Solo puede haber un docente por curso. Los estudiantes se matriculan al crear el usuario.</div>
+            </div>
             <div class="toolbar">
               <button class="btn btn--gold" type="submit">${editingCourse ? "Guardar curso" : "Crear curso"}</button>
               <button class="btn btn--ghost" type="button" data-clear-course-form>+ Nuevo</button>
@@ -963,74 +1492,47 @@ function coursesView(user, selectedCourse, visible) {
       <article class="card">
         <div class="card__header">
           <div>
-            <h2 class="card__title">Matricular estudiantes</h2>
-            <p class="card__subtitle">Selecciona con autocompletado y guarda la matrícula de una vez.</p>
+            <h2 class="card__title">Cursos registrados</h2>
+            <p class="card__subtitle">Abrir, editar o eliminar cursos.</p>
           </div>
         </div>
         <div class="card__body">
-          <form class="form" data-form="assign-course">
-            <input type="hidden" name="assignRole" value="student" />
-            ${autocompleteMarkup({ key: "enroll-course", label: "Curso", placeholder: "Escribe el nombre del curso", options: db.courses.map((item) => ({ id: item.id, label: item.name })), selectedId: course?.id || "", name: "course" })}
-            ${autocompleteMarkup({ key: "enroll-student", label: "Estudiante", placeholder: "Escribe el nombre del estudiante", options: students.map((item) => ({ id: item.id, label: userLabel(item) })), selectedId: "", name: "user" })}
-            <button class="btn btn--gold" type="submit">Matricular +</button>
-          </form>
+          <table class="table table--tight">
+            <thead>
+              <tr>
+                <th>Curso</th>
+                <th>Docente</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${courseList.map((entry) => {
+                const teacherName = entry.teacherIds
+                  .map((id) => db.users.find((u) => u.id === id)?.fullName)
+                  .filter(Boolean)
+                  .join(", ") || "Sin asignar";
+                return `
+                <tr>
+                  <td>
+                    <div class="list__title">${escapeHtml(entry.name)}</div>
+                    <div class="list__meta">${entry.items.length} clases · ${entry.studentIds.length} estudiantes</div>
+                  </td>
+                  <td>${escapeHtml(teacherName)}</td>
+                  <td>
+                    <div class="row">
+                      <button class="btn btn--ghost icon-btn" data-course="${entry.id}" type="button" aria-label="Abrir curso">↗</button>
+                      <button class="btn btn--ghost icon-btn" data-edit-course="${entry.id}" type="button" aria-label="Editar curso">✎</button>
+                      ${user.role === "admin" ? `<button class="btn btn--ghost icon-btn" data-remove-course="${entry.id}" type="button" aria-label="Eliminar curso">−</button>` : ""}
+                    </div>
+                  </td>
+                </tr>
+              `;
+              }).join("") || `<tr><td colspan="3" class="muted">No hay cursos.</td></tr>`}
+            </tbody>
+          </table>
         </div>
       </article>
     </section>
-
-    ${user.role === "admin" ? `
-	    <section class="card" style="margin-top: 18px;">
-      <div class="card__header">
-        <div>
-          <h2 class="card__title">Cursos registrados</h2>
-          <p class="card__subtitle">Abrir, editar o eliminar cursos.</p>
-        </div>
-      </div>
-      <div class="card__body">
-        <table class="table table--tight">
-          <thead>
-            <tr>
-              <th>Curso</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${visible.map((entry) => `
-              <tr>
-                <td>
-                  <div class="list__title">${entry.name}</div>
-                  <div class="list__meta">${entry.items.length} clases · ${entry.studentIds.length} estudiantes</div>
-                </td>
-                <td>
-                  <div class="row">
-                    <button class="btn btn--ghost icon-btn" data-course="${entry.id}" type="button" aria-label="Abrir curso">↗</button>
-                    <button class="btn btn--ghost icon-btn" data-edit-course="${entry.id}" type="button" aria-label="Editar curso">✎</button>
-                    <button class="btn btn--ghost icon-btn" data-remove-course="${entry.id}" type="button" aria-label="Eliminar curso">−</button>
-                  </div>
-                </td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    </section>
-      <section class="card" style="margin-top: 18px;">
-        <div class="card__header">
-          <div>
-            <h2 class="card__title">Asignar docente</h2>
-            <p class="card__subtitle">La matrícula de docentes queda separada de la matrícula de estudiantes.</p>
-          </div>
-        </div>
-        <div class="card__body">
-          <form class="form" data-form="assign-course">
-            <input type="hidden" name="assignRole" value="teacher" />
-            ${autocompleteMarkup({ key: "teacher-course", label: "Curso", placeholder: "Escribe el curso", options: db.courses.map((item) => ({ id: item.id, label: item.name })), selectedId: course?.id || "", name: "course" })}
-            ${autocompleteMarkup({ key: "teacher-user", label: "Docente", placeholder: "Escribe el docente", options: teachers.map((item) => ({ id: item.id, label: userLabel(item) })), selectedId: "", name: "user" })}
-            <button class="btn btn--gold" type="submit">Asignar docente +</button>
-          </form>
-        </div>
-      </section>
-    ` : ""}
 
     <section class="card" style="margin-top: 18px;">
       <div class="card__header">
@@ -1102,8 +1604,11 @@ function coursesView(user, selectedCourse, visible) {
 function gradesView(user, selectedCourse, visible) {
   const teacherCourses = visible;
   const course = selectedCourse || teacherCourses[0] || null;
+  if (course && ui.courseId !== course.id) ui.courseId = course.id;
   const studentOptions = course ? course.studentIds.map((id) => db.users.find((item) => item.id === id)).filter(Boolean) : [];
-  const currentStudent = db.users.find((item) => item.id === ui.gradeStudentId) || studentOptions[0] || null;
+  let currentStudent = studentOptions.find((item) => item.id === ui.gradeStudentId) || studentOptions[0] || null;
+  if (currentStudent) ui.gradeStudentId = currentStudent.id;
+  else ui.gradeStudentId = null;
   const studentGrades = currentStudent && course ? course.items.map((item) => ({ item, grade: gradeFor(currentStudent.id, course.id, item.id) })) : [];
 
   return `
@@ -1112,7 +1617,7 @@ function gradesView(user, selectedCourse, visible) {
         <div class="card__header">
           <div>
             <h2 class="card__title">Registro rápido de notas</h2>
-            <p class="card__subtitle">Busca al estudiante, selecciona la clase y captura varias calificaciones en tabla.</p>
+            <p class="card__subtitle">Busca al estudiante y captura una nota por clase (escala 1.0 a 5.0).</p>
           </div>
         </div>
         <div class="card__body">
@@ -1127,31 +1632,34 @@ function gradesView(user, selectedCourse, visible) {
                     <th>#</th>
                     <th>Clase</th>
                     <th>Tipo</th>
-                    <th>Notas</th>
-                    <th>Promedio</th>
+                    <th>Nota (1.0 – 5.0)</th>
                   </tr>
                 </thead>
                 <tbody data-note-rows>
                   ${course ? course.items.map((item, index) => {
                     const grade = currentStudent ? gradeFor(currentStudent.id, course.id, item.id) : null;
-                    const notesText = grade?.notes?.map((note) => formatScore(note.score)).join(", ") || "";
-                    const pending = !notesText;
+                    const hasGrade = Boolean(grade?.notes?.length);
+                    const scoreValue = hasGrade ? formatScore(gradeAverage(grade)) : "";
+                    const pending = !hasGrade;
+                    const pendingStyle = pending
+                      ? ' style="background: rgba(255, 123, 123, 0.14); outline: 1px solid rgba(255, 123, 123, 0.35);"'
+                      : "";
                     return `
-                      <tr class="${pending ? "table-editor__row--pending" : ""}">
+                      <tr class="${pending ? "table-editor__row--pending" : ""}"${pendingStyle}>
                         <td data-note-order>${index + 1}</td>
                         <td>
                           <input type="hidden" name="itemId[]" value="${item.id}" />
                           ${String(item.order).padStart(2, "0")} · ${escapeHtml(item.title)}
+                          ${pending ? ' <span class="badge" style="border-color: rgba(255,123,123,0.4); background: rgba(255,123,123,0.12); color: #ffb4b4;">Sin nota</span>' : ""}
                         </td>
                         <td>${item.kind === "practice" ? "Práctica / brigada" : "Tema / clase"}</td>
-                        <td><input name="notesText[]" value="${escapeHtml(notesText)}" placeholder="4.5, 4.7" /></td>
-                        <td>${formatScore(gradeAverage(grade))}</td>
+                        <td><input name="notesText[]" inputmode="decimal" value="${scoreValue === "--" ? "" : escapeHtml(scoreValue)}" placeholder="0.0 – 5.0" /></td>
                       </tr>
                     `;
-                  }).join("") : `<tr><td colspan="5" class="muted">Selecciona un curso para ver su temario.</td></tr>`}
+                  }).join("") : `<tr><td colspan="4" class="muted">Selecciona un curso para ver su temario.</td></tr>`}
                 </tbody>
               </table>
-              <div class="helper" style="margin-top: 8px;">Escribe varias notas separadas por coma. Las filas vacías quedan marcadas en rojo.</div>
+              <div class="helper" style="margin-top: 8px;">Una sola nota por clase (0.0 a 5.0). Filas en rojo = sin calificar. Al guardar, los campos vacíos se registran como <strong>0.0</strong> para completar el promedio.</div>
             </div>
             <button class="btn btn--gold" type="submit">Guardar notas</button>
           </form>
@@ -1204,7 +1712,7 @@ function teacherGradeSummary(course, student, studentGrades) {
         <div class="list__meta">${studentGrades.filter((entry) => entry.grade).length} de ${course.items.length} actividades evaluadas</div>
       </div>
       <table class="table table--tight">
-        <thead><tr><th>Clase</th><th>Tipo</th><th>Promedio</th><th>Notas</th></tr></thead>
+        <thead><tr><th>Clase</th><th>Tipo</th><th>Nota</th></tr></thead>
         <tbody>
           ${studentGrades
             .map(
@@ -1212,8 +1720,7 @@ function teacherGradeSummary(course, student, studentGrades) {
                 <tr>
                   <td>${String(item.order).padStart(2, "0")} · ${item.title}</td>
                   <td>${item.kind === "practice" ? "Práctica" : "Tema"}</td>
-                  <td>${formatScore(gradeAverage(grade))}</td>
-                  <td>${grade ? grade.notes.map((note) => formatScore(note.score)).join(" · ") : "Sin notas"}</td>
+                  <td>${grade ? formatScore(gradeAverage(grade)) : "Sin nota"}</td>
                 </tr>
               `,
             )
@@ -1302,14 +1809,13 @@ function studentCourseDetail(course, user) {
         </div>
       </div>
       <table class="table table--tight">
-        <thead><tr><th>Clase</th><th>Tipo</th><th>Promedio</th><th>Notas</th></tr></thead>
+        <thead><tr><th>Clase</th><th>Tipo</th><th>Nota</th></tr></thead>
         <tbody>
           ${summary.items.map((item) => `
             <tr>
               <td>${String(item.order).padStart(2, "0")} · ${item.title}</td>
               <td>${item.kind === "practice" ? "Práctica / brigada" : "Tema / clase"}</td>
               <td>${formatScore(item.avg)}</td>
-              <td>${item.grade ? item.grade.notes.map((note) => formatScore(note.score)).join(" · ") : "Sin notas"}</td>
             </tr>
           `).join("")}
         </tbody>
@@ -1412,7 +1918,7 @@ function renderCourseRosterByCourse() {
       <div class="card__header">
         <div>
           <h2 class="card__title">Estudiantes por curso</h2>
-          <p class="card__subtitle">Agrupación simple de estudiantes matriculados por curso.</p>
+          <p class="card__subtitle">Matrícula y promedios (temas, prácticas y nota final) por estudiante.</p>
         </div>
       </div>
       <div class="card__body">
@@ -1423,21 +1929,34 @@ function renderCourseRosterByCourse() {
               <div class="list__item">
                 <div class="row" style="justify-content: space-between;">
                   <div>
-                    <div class="list__title">${course.name}</div>
+                    <div class="list__title">${escapeHtml(course.name)}</div>
                     <div class="list__meta">${students.length} estudiante(s) matriculado(s)</div>
                   </div>
                   <span class="badge badge--muted">${course.teacherIds.length} docente(s)</span>
                 </div>
                 <table class="table table--tight" style="margin-top: 12px;">
-                  <thead><tr><th>Estudiante</th><th>Documento</th><th>Contacto</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Estudiante</th>
+                      <th>Documento</th>
+                      <th>Temas</th>
+                      <th>Prácticas</th>
+                      <th>Final</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    ${students.map((student) => `
+                    ${students.map((student) => {
+                      const summary = courseSummary(course, student.id);
+                      return `
                       <tr>
-                        <td>${student.fullName}</td>
-                        <td>${student.documentId || "Sin documento"}</td>
-                        <td>${[student.email, student.phone].filter(Boolean).join(" · ") || "Sin contacto"}</td>
+                        <td>${escapeHtml(student.fullName)}</td>
+                        <td>${escapeHtml(student.documentId || "Sin documento")}</td>
+                        <td>${formatScore(summary.topicAverage)}</td>
+                        <td>${formatScore(summary.practiceAverage)}</td>
+                        <td><strong>${formatScore(summary.finalAverage)}</strong></td>
                       </tr>
-                    `).join("") || '<tr><td colspan="3" class="muted">Sin estudiantes matriculados.</td></tr>'}
+                    `;
+                    }).join("") || '<tr><td colspan="5" class="muted">Sin estudiantes matriculados.</td></tr>'}
                   </tbody>
                 </table>
               </div>
@@ -1648,15 +2167,68 @@ function bindEvents() {
   }));
 
   app.querySelectorAll("[data-autocomplete-key]").forEach((input) => {
-    input.addEventListener("input", () => {
-      syncAutocompleteField(input);
+    bindAutocompleteInput(input);
+  });
+
+  app.querySelectorAll("input, select, textarea").forEach((field) => {
+    if (field.dataset.autocompleteKey) return;
+    field.addEventListener("input", () => setDirty());
+    field.addEventListener("change", () => setDirty());
+  });
+
+  app.querySelectorAll("[data-action='export-json']").forEach((button) => {
+    button.addEventListener("click", exportDbJson);
+  });
+  app.querySelectorAll("[data-action='import-json']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "application/json,.json";
+      input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        if (file) importDbJson(file);
+      });
+      input.click();
+    });
+  });
+
+  app.querySelectorAll("[data-form='change-password']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      changeOwnPassword(form);
+    });
+  });
+
+  app.querySelectorAll("[data-user-role-select]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const role = select.value;
+      const courseField = app.querySelector("[data-role-field='course']");
+      const documentField = app.querySelector("[data-role-field='document']");
+      const courseLabel = app.querySelector("[data-course-label]");
+      const courseHelper = app.querySelector("[data-course-helper]");
+      if (courseField) courseField.style.display = role === "admin" ? "none" : "";
+      if (documentField) {
+        const docInput = documentField.querySelector("input");
+        if (docInput) docInput.required = role === "student";
+      }
+      if (courseLabel) {
+        courseLabel.textContent = role === "teacher"
+          ? "Curso a asignar (un docente por curso)"
+          : "Curso a matricular";
+      }
+      if (courseHelper) {
+        courseHelper.textContent = role === "teacher"
+          ? "Al asignar, este docente quedará como el único del curso."
+          : "Obligatorio al crear un estudiante. Puedes matricular más cursos después desde Cursos.";
+      }
       setDirty();
     });
   });
 
-  app.querySelectorAll("input, select, textarea").forEach((field) => {
-    field.addEventListener("input", () => setDirty());
-    field.addEventListener("change", () => setDirty());
+  bindScoreInputs();
+
+  app.querySelectorAll("[data-document-id]").forEach((input) => {
+    bindDocumentIdField(input);
   });
 }
 
