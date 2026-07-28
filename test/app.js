@@ -906,6 +906,44 @@ function assignCourse(form) {
   render();
 }
 
+function availableCoursesForStudent(studentId) {
+  return db.courses.filter((course) => !course.studentIds.includes(studentId));
+}
+
+function enrolledCoursesForStudent(studentId) {
+  return db.courses.filter((course) => course.studentIds.includes(studentId));
+}
+
+function enrollExistingStudent(form) {
+  const data = new FormData(form);
+  const studentId = String(data.get("studentId") || "").trim();
+  const courseId = String(data.get("courseId") || "").trim();
+  const student = db.users.find((user) => user.id === studentId && user.role === "student");
+  const course = courseById(courseId);
+
+  if (!student) {
+    toast("Selecciona un estudiante válido.");
+    return;
+  }
+  if (!course) {
+    toast("Selecciona un curso válido.");
+    return;
+  }
+  if (course.studentIds.includes(student.id)) {
+    toast("El estudiante ya está matriculado en ese curso.");
+    return;
+  }
+
+  const nextCourses = db.courses.map((entry) => {
+    if (entry.id !== course.id) return entry;
+    return { ...entry, studentIds: [...entry.studentIds, student.id] };
+  });
+  saveDb({ ...db, courses: nextCourses });
+  markClean();
+  toast(`${student.fullName} matriculado en ${course.name}.`);
+  render();
+}
+
 function normalizeScoreInput(raw) {
   let text = String(raw ?? "").trim();
   if (!text) return { empty: true, value: null, display: "" };
@@ -1439,6 +1477,7 @@ function usersView() {
             { id: "students", label: "Estudiantes" },
             { id: "teachers", label: "Docentes" },
             { id: "admins", label: "Administradores" },
+            { id: "enroll", label: "Matricular" },
             { id: "by-course", label: "Por curso" },
           ].map((tab) => `<button class="${ui.usersTab === tab.id ? "is-active" : ""}" data-user-tab="${tab.id}" type="button">${tab.label}</button>`).join("")}
         </div>
@@ -1448,7 +1487,70 @@ function usersView() {
     ${ui.usersTab === "students" ? renderUsersBulkTable("student", "Estudiantes", "Nombre, documento, contacto y contraseña editables en bloque.") : ""}
     ${ui.usersTab === "teachers" ? renderUsersBulkTable("teacher", "Docentes", "Información base y contraseña editables en una sola tabla.") : ""}
     ${ui.usersTab === "admins" ? renderUsersBulkTable("admin", "Administradores", "Puedes cambiar la contraseña de cada administrador desde esta tabla.") : ""}
+    ${ui.usersTab === "enroll" ? renderEnrollExtraCourses() : ""}
     ${ui.usersTab === "by-course" ? renderCourseRosterByCourse() : ""}
+  `;
+}
+
+function renderEnrollExtraCourses() {
+  const students = db.users.filter((user) => user.role === "student");
+  return `
+    <section class="card" style="margin-top: 18px;">
+      <div class="card__header">
+        <div>
+          <h2 class="card__title">Matricular en otros cursos</h2>
+          <p class="card__subtitle">Lista de estudiantes existentes. Solo se ofrecen cursos en los que aún no están matriculados.</p>
+        </div>
+      </div>
+      <div class="card__body">
+        ${students.length ? `
+          <table class="table table--tight table-editor">
+            <thead>
+              <tr>
+                <th>Estudiante</th>
+                <th>Documento</th>
+                <th>Cursos actuales</th>
+                <th>Matricular en</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${students.map((student) => {
+                const enrolled = enrolledCoursesForStudent(student.id);
+                const available = availableCoursesForStudent(student.id);
+                return `
+                  <tr>
+                    <td>
+                      <div class="list__title">${escapeHtml(student.fullName)}</div>
+                      <div class="list__meta">@${escapeHtml(student.username)}</div>
+                    </td>
+                    <td>${escapeHtml(student.documentId || "Sin documento")}</td>
+                    <td>
+                      ${enrolled.length
+                        ? enrolled.map((course) => `<span class="badge badge--muted" style="margin: 2px;">${escapeHtml(course.name)}</span>`).join(" ")
+                        : '<span class="muted">Sin cursos</span>'}
+                    </td>
+                    <td>
+                      ${available.length ? `
+                        <form class="form form--compact" data-form="enroll-existing" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                          <input type="hidden" name="studentId" value="${escapeHtml(student.id)}" />
+                          <select name="courseId" required style="min-width: 160px; flex: 1 1 160px;">
+                            <option value="">Elegir curso…</option>
+                            ${available.map((course) => `<option value="${escapeHtml(course.id)}">${escapeHtml(course.name)}</option>`).join("")}
+                          </select>
+                          <button class="btn btn--gold" type="submit">Matricular</button>
+                        </form>
+                      ` : '<span class="badge">Ya está en todos los cursos</span>'}
+                    </td>
+                    <td></td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        ` : '<p class="muted">No hay estudiantes registrados.</p>'}
+      </div>
+    </section>
   `;
 }
 
@@ -2164,6 +2266,11 @@ function bindEvents() {
   app.querySelectorAll("[data-form='bulk-users']").forEach((form) => form.addEventListener("submit", (event) => {
     event.preventDefault();
     saveBulkUsers(form);
+  }));
+
+  app.querySelectorAll("[data-form='enroll-existing']").forEach((form) => form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    enrollExistingStudent(form);
   }));
 
   app.querySelectorAll("[data-autocomplete-key]").forEach((input) => {
