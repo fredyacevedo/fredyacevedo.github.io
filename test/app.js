@@ -1187,7 +1187,7 @@ function loginView() {
           <div class="kpi-row">
             <div class="kpi"><strong>${db.courses.length}</strong><span>Cursos</span></div>
             <div class="kpi"><strong>${db.users.length}</strong><span>Usuarios</span></div>
-            <div class="kpi"><strong>Responsive</strong><span>PC y móvil</span></div>
+            <div class="kpi"><strong>Compatible</strong><span>PC y móvil</span></div>
           </div>
         </section>
         <section class="login__form">
@@ -1208,7 +1208,7 @@ function loginView() {
             <button class="btn btn--gold" type="submit">Entrar</button>
           </form>
           <div class="notice" style="margin-top: 16px;">
-            Cuentas de prueba: <strong>admin / Admin123!</strong>, <strong>docente / Docente123!</strong>, <strong>estudiante / Estudiante123!</strong>
+            Si olvidaste tu contraseña, contacta a tu docente o administrador para solicitar el restablecimiento de tu cuenta.
           </div>
         </section>
       </div>
