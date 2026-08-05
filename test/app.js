@@ -1,9 +1,11 @@
 const DB_KEY = "estetica-mooc-db-v1";
 const SESSION_KEY = "estetica-mooc-session-v1";
+const THEME_KEY = "estetica-mooc-theme-v1";
 const app = document.getElementById("app");
 
-let db = loadDb();
-let session = loadSession();
+let db;
+let session;
+let theme;
 let ui = {
   view: "overview",
   courseId: null,
@@ -17,6 +19,104 @@ let ui = {
 
 const BRAND_NAME = "JESSIKA RUIZ ACADEMIA";
 const BRAND_TAGLINE = "Gestión académica simple para cursos, temarios, matrículas y notas.";
+const COURSE_ICON_MAP = {
+  "book-open": { label: "Libro", svg: '<path d="M12 7v13"/><path d="M3 18a1 1 0 0 1 1-1h5a3 3 0 0 1 3 3v-2a3 3 0 0 0-3-3H4a1 1 0 0 0-1 1z"/><path d="M21 18a1 1 0 0 0-1-1h-5a3 3 0 0 0-3 3v-2a3 3 0 0 1 3-3h5a1 1 0 0 1 1 1z"/>' },
+  scissors: { label: "Corte", svg: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/>' },
+  sparkles: { label: "Estrella", svg: '<path d="M9 12 7.5 9 4 7.5 7.5 6 9 3l1.5 3L14 7.5 10.5 9z"/><path d="m14 4 1.5 3L19 8.5 15.5 10 14 13l-1.5-3L9 8.5 12.5 7z"/>' },
+  "flask-conical": { label: "Laboratorio", svg: '<path d="M10 2v4.15a2 2 0 0 1-.41 1.21L5.6 12.77A4 4 0 0 0 8.77 19h6.46a4 4 0 0 0 3.17-6.23l-3.99-5.41A2 2 0 0 1 14 6.15V2"/><path d="M7 14h10"/>' },
+  palette: { label: "Maquillaje", svg: '<path d="M12 2a10 10 0 1 0 10 10c0-1.1-.9-2-2-2h-2.5a1.5 1.5 0 0 1 0-3H18a3 3 0 0 0 0-6z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/>' },
+  "graduation-cap": { label: "Academia", svg: '<path d="m2 8 10 5 10-5-10-5-10 5z"/><path d="M6 10.5V15a6 6 0 0 0 12 0v-4.5"/>' },
+  image: { label: "Imagen", svg: '<rect width="18" height="14" x="3" y="5" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 15-5-5-5 5"/>' },
+  camera: { label: "Cámara", svg: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-1.5-3Z"/><circle cx="12" cy="13" r="3"/>' },
+  award: { label: "Logro", svg: '<circle cx="12" cy="8" r="5"/><path d="M8.21 13.89 7 22l5-3 5 3-1.21-8.11"/>' },
+  "clipboard-list": { label: "Lista", svg: '<rect width="14" height="18" x="5" y="3" rx="2"/><path d="M9 7h4"/><path d="M9 11h4"/><path d="M9 15h4"/>' },
+  users: { label: "Usuarios", svg: '<path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
+  "layout-dashboard": { label: "Inicio", svg: '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>' },
+  "log-out": { label: "Salir", svg: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>' },
+  "moon-star": { label: "Oscuro", svg: '<path d="M12 3a6 6 0 0 0 0 12 7 7 0 0 1 7-7 9 9 0 1 1-7-5Z"/><path d="m19 3 1.5 3L24 7.5 20.5 9 19 12l-1.5-3L14 7.5 17.5 6z"/>' },
+  sun: { label: "Claro", svg: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>' },
+};
+const COURSE_ICON_NAMES = Object.keys(COURSE_ICON_MAP);
+const COURSE_ICON_ALIASES = {
+  "📘": "book-open",
+  "📗": "book-open",
+  "📕": "book-open",
+  "🧪": "flask-conical",
+  "✂️": "scissors",
+  "💄": "palette",
+  "🪞": "image",
+  "🧴": "award",
+  "⭐": "sparkles",
+  "🎓": "graduation-cap",
+};
+
+db = loadDb();
+session = loadSession();
+theme = loadTheme();
+
+function defaultCourseIcon(courseId, name = "") {
+  const source = `${courseId || ""}${name || ""}`;
+  const index = Math.abs(Array.from(source).reduce((sum, char) => sum + char.charCodeAt(0), 0)) % COURSE_ICON_NAMES.length;
+  return COURSE_ICON_NAMES[index];
+}
+
+function normalizeCourseIcon(value, courseId = "", name = "") {
+  const normalized = COURSE_ICON_ALIASES[value] || value;
+  return COURSE_ICON_NAMES.includes(normalized) ? normalized : defaultCourseIcon(courseId, name);
+}
+
+function lucideIcon(name, size = 18, title = "") {
+  const entry = COURSE_ICON_MAP[name] || COURSE_ICON_MAP["book-open"];
+  const label = title || entry.label;
+  return `
+    <svg class="lucide-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" role="img">
+      <title>${escapeHtml(label)}</title>
+      ${entry.svg}
+    </svg>
+  `;
+}
+
+function safePhotoValue(value) {
+  return typeof value === "string" && value.startsWith("data:image/") ? value : "";
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll("\n", " ");
+}
+
+function loadTheme() {
+  const stored = safeParse(localStorage.getItem(THEME_KEY));
+  return stored === "dark" ? "dark" : "light";
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function applyTheme() {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+}
+
+function saveTheme(nextTheme) {
+  theme = nextTheme === "dark" ? "dark" : "light";
+  try {
+    localStorage.setItem(THEME_KEY, JSON.stringify(theme));
+  } catch (error) {
+    console.warn("No se pudo guardar el tema.", error);
+  }
+  applyTheme();
+}
+
+function toggleTheme() {
+  saveTheme(theme === "dark" ? "light" : "dark");
+  render();
+}
 
 function uid(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
@@ -255,7 +355,7 @@ function noteRowMarkup(note = {}, index = 0) {
   return `
     <tr class="table-editor__row">
       <td>${index + 1}</td>
-      <td><input name="noteScore[]" type="number" min="0" max="5" step="0.1" value="${escapeHtml(note.score ?? "")}" placeholder="0.0" /></td>
+      <td><input name="noteScore[]" type="number" min="0" max="5" step="0.1" value="${escapeHtml(note.score ?? "")}" aria-label="Nota ${index + 1}" /></td>
       <td>
         <input type="hidden" name="noteLabel[]" value="Calificación ${index + 1}" />
         <button class="btn btn--ghost icon-btn" type="button" data-remove-note-row aria-label="Eliminar nota">−</button>
@@ -277,9 +377,22 @@ function normalizeDb(raw) {
   if (!users || !courses) return null;
   return {
     version: Number(raw.version) || 1,
-    users,
+    users: users.map((user) => ({
+      ...user,
+      documentId: user.documentId || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      photo: safePhotoValue(user.photo),
+      birthDate: user.birthDate || "",
+      address: user.address || "",
+      guardianName: user.guardianName || "",
+      emergencyContact: user.emergencyContact || "",
+      emergencyPhone: user.emergencyPhone || "",
+      healthInfo: user.healthInfo || "",
+    })),
     courses: courses.map((course) => ({
       ...course,
+      icon: normalizeCourseIcon(course.icon, course.id, course.name),
       teacherIds: Array.isArray(course.teacherIds) ? course.teacherIds : [],
       studentIds: Array.isArray(course.studentIds) ? course.studentIds : [],
       items: Array.isArray(course.items) ? course.items : [],
@@ -304,6 +417,14 @@ function saveDb(nextDb) {
     localStorage.setItem(DB_KEY, JSON.stringify(db));
   } catch (error) {
     toast("No se pudo guardar en el navegador (almacenamiento lleno o bloqueado).");
+    console.error(error);
+  }
+}
+
+function persistDb() {
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+  } catch (error) {
     console.error(error);
   }
 }
@@ -343,19 +464,81 @@ function rowsToCsv(headers, rows) {
   return lines.join("\n");
 }
 
+function rowsToExcelHtml(title, headers, rows) {
+  const tableRows = rows.map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(value ?? "")}</td>`).join("")}</tr>`).join("");
+  return `
+    <h2>${escapeHtml(title)}</h2>
+    <table>
+      <thead>
+        <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+  `;
+}
+
+function exportDbExcel() {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const html = `
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>JESSIKA RUIZ ACADEMIA - Exportación Excel</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #222; }
+          h2 { margin: 24px 0 8px; }
+          table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+          th, td { border: 1px solid #999; padding: 6px 8px; text-align: left; vertical-align: top; }
+          th { background: #f3d1df; }
+        </style>
+      </head>
+      <body>
+        ${rowsToExcelHtml("Usuarios", ["id", "fullName", "username", "role", "documentId", "email", "phone", "birthDate", "address", "guardianName", "emergencyContact", "emergencyPhone", "healthInfo", "photo", "password"], db.users.map((user) => [user.id, user.fullName, user.username, user.role, user.documentId || "", user.email || "", user.phone || "", user.birthDate || "", user.address || "", user.guardianName || "", user.emergencyContact || "", user.emergencyPhone || "", user.healthInfo || "", user.photo || "", user.password || ""]))}
+        ${rowsToExcelHtml("Cursos", ["id", "name", "icon", "description", "teacherIds", "studentIds", "itemsCount"], db.courses.map((course) => [course.id, course.name, course.icon || "", course.description || "", (course.teacherIds || []).join("|"), (course.studentIds || []).join("|"), (course.items || []).length]))}
+        ${rowsToExcelHtml("Temario", ["courseId", "courseName", "itemId", "order", "title", "kind"], db.courses.flatMap((course) => (course.items || []).map((item) => [course.id, course.name, item.id, item.order, item.title, item.kind])))}
+        ${rowsToExcelHtml("Calificaciones", ["id", "courseId", "studentId", "itemId", "average", "updatedBy", "updatedAt"], db.grades.map((grade) => [grade.id, grade.courseId, grade.studentId, grade.itemId, gradeAverage(grade), grade.updatedBy || "", grade.updatedAt || ""]))}
+        ${rowsToExcelHtml("Matrículas", ["courseId", "courseName", "userId", "fullName", "role"], db.courses.flatMap((course) => (course.studentIds || []).map((userId) => {
+          const user = db.users.find((entry) => entry.id === userId);
+          return [course.id, course.name, userId, user?.fullName || "", user?.role || "student"];
+        })))}
+      </body>
+    </html>
+  `;
+  const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  downloadBlob(`jessika-ruiz-academia-export-${stamp}.xls`, blob);
+  toast("Archivo Excel descargado.");
+}
+
 function exportDbCsv() {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
   const usersCsv = rowsToCsv(
-    ["id", "fullName", "username", "role", "documentId", "email", "phone", "password"],
-    db.users.map((user) => [user.id, user.fullName, user.username, user.role, user.documentId || "", user.email || "", user.phone || "", user.password || ""]),
+    ["id", "fullName", "username", "role", "documentId", "email", "phone", "birthDate", "address", "guardianName", "emergencyContact", "emergencyPhone", "healthInfo", "photo", "password"],
+    db.users.map((user) => [
+      user.id,
+      user.fullName,
+      user.username,
+      user.role,
+      user.documentId || "",
+      user.email || "",
+      user.phone || "",
+      user.birthDate || "",
+      user.address || "",
+      user.guardianName || "",
+      user.emergencyContact || "",
+      user.emergencyPhone || "",
+      user.healthInfo || "",
+      user.photo || "",
+      user.password || "",
+    ]),
   );
 
   const coursesCsv = rowsToCsv(
-    ["id", "name", "description", "teacherIds", "studentIds", "itemsCount"],
+    ["id", "name", "icon", "description", "teacherIds", "studentIds", "itemsCount"],
     db.courses.map((course) => [
       course.id,
       course.name,
+      course.icon || "",
       course.description || "",
       (course.teacherIds || []).join("|"),
       (course.studentIds || []).join("|"),
@@ -465,11 +648,24 @@ function safeParse(text) {
 }
 
 function buildInitialDb(seed) {
-  const users = seed.users.map((user) => ({ ...user }));
+  const users = seed.users.map((user) => ({
+    ...user,
+    documentId: user.documentId || "",
+    email: user.email || "",
+    phone: user.phone || "",
+    photo: safePhotoValue(user.photo),
+    birthDate: user.birthDate || "",
+    address: user.address || "",
+    guardianName: user.guardianName || "",
+    emergencyContact: user.emergencyContact || "",
+    emergencyPhone: user.emergencyPhone || "",
+    healthInfo: user.healthInfo || "",
+  }));
   const courses = seed.courses.map((course) => ({
     id: course.id,
     name: course.name,
     description: course.description,
+    icon: normalizeCourseIcon(course.icon, course.id, course.name),
     teacherIds: seed.assignments.filter((item) => item.courseId === course.id).map((item) => item.userId),
     studentIds: seed.enrollments.filter((item) => item.courseId === course.id).map((item) => item.userId),
     items: course.lessons.map((title, index) => ({
@@ -671,6 +867,78 @@ function bindDocumentIdField(input) {
   input.addEventListener("change", syncCredentials);
 }
 
+async function updatePhotoField(form, value) {
+  const hidden = form?.querySelector("[data-photo-data]");
+  const preview = form?.querySelector("[data-photo-preview]");
+  if (!hidden) return;
+  hidden.value = safePhotoValue(value);
+  if (preview) {
+    preview.innerHTML = hidden.value
+      ? `<img src="${escapeAttr(hidden.value)}" alt="Foto del estudiante" />`
+      : '<span class="muted">Sin foto</span>';
+  }
+}
+
+function bindPhotoField(form) {
+  if (!form) return;
+  const fileInput = form.querySelector("[data-photo-file]");
+  const hidden = form.querySelector("[data-photo-data]");
+  const preview = form.querySelector("[data-photo-preview]");
+  const video = form.querySelector("[data-photo-camera]");
+  const startButton = form.querySelector("[data-photo-camera-start]");
+  const captureButton = form.querySelector("[data-photo-camera-capture]");
+  const stopButton = form.querySelector("[data-photo-camera-stop]");
+  let stream = null;
+
+  if (hidden && preview) {
+    preview.innerHTML = hidden.value
+      ? `<img src="${escapeAttr(hidden.value)}" alt="Foto del estudiante" />`
+      : '<span class="muted">Sin foto</span>';
+  }
+
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    const dataUrl = await readFileAsDataUrl(file);
+    await updatePhotoField(form, dataUrl);
+    setDirty();
+  });
+
+  startButton?.addEventListener("click", async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (video) {
+        video.hidden = false;
+        video.srcObject = stream;
+      }
+    } catch (error) {
+      toast("No se pudo activar la cámara.");
+      console.error(error);
+    }
+  });
+
+  captureButton?.addEventListener("click", async () => {
+    if (!video || !stream) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    await updatePhotoField(form, canvas.toDataURL("image/png"));
+    setDirty();
+  });
+
+  stopButton?.addEventListener("click", () => {
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    if (video) {
+      video.srcObject = null;
+      video.hidden = true;
+    }
+  });
+}
+
 function saveUser(form) {
   const data = new FormData(form);
   const userId = String(data.get("userId") || "");
@@ -682,6 +950,13 @@ function saveUser(form) {
   let password = String(data.get("password") || "").trim();
   const email = String(data.get("email") || "").trim();
   const phone = String(data.get("phone") || "").trim();
+  const birthDate = String(data.get("birthDate") || "").trim();
+  const address = String(data.get("address") || "").trim();
+  const guardianName = String(data.get("guardianName") || "").trim();
+  const emergencyContact = String(data.get("emergencyContact") || "").trim();
+  const emergencyPhone = String(data.get("emergencyPhone") || "").trim();
+  const healthInfo = String(data.get("healthInfo") || "").trim();
+  const photoData = safePhotoValue(String(data.get("photoData") || ""));
   const linkedCourseId = String(data.get("linkedCourseId") || "").trim();
 
   // Por defecto usuario y contraseña = documento sin separadores
@@ -722,8 +997,8 @@ function saveUser(form) {
   }
 
   const nextUsers = userId
-    ? db.users.map((user) => (user.id === userId ? { ...user, fullName, username, password, role, documentId, email, phone } : user))
-    : [{ id: uid("user"), fullName, username, password, role, documentId, email, phone }, ...db.users];
+    ? db.users.map((user) => (user.id === userId ? { ...user, fullName, username, password, role, documentId, email, phone, birthDate, address, guardianName, emergencyContact, emergencyPhone, healthInfo, photo: photoData || user.photo || "" } : user))
+    : [{ id: uid("user"), fullName, username, password, role, documentId, email, phone, birthDate, address, guardianName, emergencyContact, emergencyPhone, healthInfo, photo: photoData }, ...db.users];
 
   const finalUser = nextUsers.find((user) => user.id === (userId || nextUsers[0].id)) || null;
   const courseIds = linkedCourseId ? [linkedCourseId] : [];
@@ -799,6 +1074,7 @@ function changeOwnPassword(form) {
 function saveCourse(form) {
   const data = new FormData(form);
   const courseId = String(data.get("courseId") || "");
+  const icon = normalizeCourseIcon(String(data.get("icon") || ""), courseId, String(data.get("name") || ""));
   const name = String(data.get("name") || "").trim();
   const description = String(data.get("description") || "").trim();
   const teacherId = String(data.get("teacherId") || "").trim();
@@ -827,11 +1103,11 @@ function saveCourse(form) {
           ...course,
           name,
           description,
-          // Select explícito: vacío quita docente; valor fija el único docente del curso
+          icon,
           teacherIds,
         };
       })
-    : [{ id, name, description, teacherIds, studentIds: [], items: [] }, ...db.courses];
+    : [{ id, name, description, icon, teacherIds, studentIds: [], items: [] }, ...db.courses];
 
   saveDb({ ...db, courses: nextCourses });
   ui.courseId = id;
@@ -1177,18 +1453,14 @@ function loginView() {
       <div class="login__panel">
         <section class="login__hero">
           <div class="row" style="align-items: center;">
-            <div class="brand-mark"><img src="logo.svg" alt="Logo Jessika Ruiz" /></div>
+            <div class="brand-mark brand-mark--beveled brand-mark--png"><img src="jessika-ruiz-logo.png" alt="Logo Jessika Ruiz" /></div>
             <div>
               <div class="brand__kicker">${BRAND_NAME}</div>
               <h1 class="login__title">Sistema académico para cursos, matrículas y calificaciones</h1>
             </div>
           </div>
           <p class="login__copy">${BRAND_TAGLINE}</p>
-          <div class="kpi-row">
-            <div class="kpi"><strong>${db.courses.length}</strong><span>Cursos</span></div>
-            <div class="kpi"><strong>${db.users.length}</strong><span>Usuarios</span></div>
-            <div class="kpi"><strong>Compatible</strong><span>PC y móvil</span></div>
-          </div>
+          <button class="btn btn--ghost theme-toggle" type="button" data-action="toggle-theme">${lucideIcon(theme === "dark" ? "sun" : "moon-star", 16, theme === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro")} ${theme === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}</button>
         </section>
         <section class="login__form">
           <div class="brand">
@@ -1199,17 +1471,14 @@ function loginView() {
           <form class="form" data-login-form>
             <div class="field">
               <label>Usuario</label>
-              <input name="username" autocomplete="username" placeholder="admin" required />
+              <input name="username" autocomplete="username" required />
             </div>
             <div class="field">
               <label>Contraseña</label>
-              <input name="password" type="password" autocomplete="current-password" placeholder="Admin123!" required />
+              <input name="password" type="password" autocomplete="current-password" required />
             </div>
             <button class="btn btn--gold" type="submit">Entrar</button>
           </form>
-          <div class="notice" style="margin-top: 16px;">
-            Si olvidaste tu contraseña, contacta a tu docente o administrador para solicitar el restablecimiento de tu cuenta.
-          </div>
         </section>
       </div>
     </main>
@@ -1221,7 +1490,7 @@ function shellView(user) {
   const selectedCourse = courseById(ui.courseId) || visible[0] || null;
   if (!ui.courseId && selectedCourse) ui.courseId = selectedCourse.id;
   const navItems = [
-    { id: "overview", label: "Resumen" },
+    { id: "overview", label: "Inicio" },
     user.role === "admin" ? { id: "users", label: "Usuarios" } : null,
     user.role === "admin" || user.role === "teacher" ? { id: "courses", label: "Cursos" } : null,
     user.role === "teacher" || user.role === "admin" ? { id: "grades", label: "Calificaciones" } : null,
@@ -1232,7 +1501,7 @@ function shellView(user) {
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark"><img src="logo.svg" alt="Logo Jessika Ruiz" /></div>
+          <div class="brand-mark brand-mark--beveled brand-mark--png"><img src="jessika-ruiz-logo.png" alt="Logo Jessika Ruiz" /></div>
           <div class="brand__kicker">${BRAND_NAME}</div>
           <div class="brand__title">Panel académico</div>
           <div class="brand__subtitle">${user.fullName} · ${roleLabel(user.role)}</div>
@@ -1241,7 +1510,7 @@ function shellView(user) {
           ${navItems
             .map(
               (item) => `
-                <button class="${ui.view === item.id ? "is-active" : ""}" data-view="${item.id}">${item.label}</button>
+                <button class="${ui.view === item.id ? "is-active" : ""}" data-view="${item.id}">${item.id === "overview" ? lucideIcon("layout-dashboard") : item.id === "users" ? lucideIcon("users") : item.id === "courses" ? lucideIcon("book-open") : item.id === "grades" ? lucideIcon("clipboard-list") : lucideIcon("award")} ${item.label}</button>
               `,
             )
             .join("")}
@@ -1249,9 +1518,11 @@ function shellView(user) {
         <div class="sidebar__footer">
           <div class="pill">Rol: ${roleLabel(user.role)}</div>
           <div class="pill">Cursos visibles: ${visible.length}</div>
-          <button class="btn btn--ghost" data-action="logout">Cerrar sesión</button>
+          <button class="btn btn--ghost" data-action="toggle-theme">${lucideIcon(theme === "dark" ? "sun" : "moon-star", 16, theme === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro")} ${theme === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}</button>
+          <button class="btn btn--ghost" data-action="logout">${lucideIcon("log-out", 16, "Cerrar sesión")} Cerrar sesión</button>
           ${user.role === "admin" ? `
             <button class="btn btn--ghost" data-action="export-json">Exportar JSON</button>
+            <button class="btn btn--ghost" data-action="export-excel">Exportar Excel</button>
             <button class="btn btn--ghost" data-action="import-json">Importar JSON</button>
             <button class="btn btn--ghost" data-action="reset-demo">Restablecer datos</button>
           ` : ""}
@@ -1279,7 +1550,7 @@ function viewTitle(view, user) {
   if (view === "courses") return "Cursos y temarios";
   if (view === "grades") return user.role === "admin" ? "Calificaciones" : "Registro de notas";
   if (view === "notes") return "Mis notas";
-  return "Resumen general";
+  return "Inicio";
 }
 
 function viewSubtitle(view, user, course, visible) {
@@ -1287,7 +1558,7 @@ function viewSubtitle(view, user, course, visible) {
   if (view === "courses") return "Agrega cursos, temas, brigadas y asignaciones.";
   if (view === "grades") return "Carga varias notas por práctica o por clase y guarda el promedio.";
   if (view === "notes") return "Consulta tus cursos, promedios y nota final calculada.";
-  return `Vista filtrada según el rol. ${visible.length} cursos disponibles.`;
+  return `Accesos rápidos, cursos activos y acciones principales. ${visible.length} cursos disponibles.`;
 }
 
 function renderView(user, selectedCourse, visible) {
@@ -1305,29 +1576,45 @@ function overviewView(user, selectedCourse, visible) {
   return `
     <section class="card card--soft">
       <div class="card__body">
-        <div class="toolbar">
-          <div>
-            <div class="section-title">${roleLabel(user.role)}</div>
-            <h2 class="card__title">${BRAND_NAME}</h2>
-            <p class="card__subtitle">${BRAND_TAGLINE}</p>
+        <div class="toolbar overview-hero">
+          <div class="overview-brand">
+            <div class="brand-mark brand-mark--beveled brand-mark--png"><img src="jessika-ruiz-logo.png" alt="Logo Jessika Ruiz" /></div>
+            <div>
+              <div class="section-title">${roleLabel(user.role)}</div>
+              <h2 class="card__title">${BRAND_NAME}</h2>
+              <p class="card__subtitle">${BRAND_TAGLINE}</p>
+            </div>
           </div>
-          <span class="badge">Cursos visibles: ${visible.length}</span>
-          ${user.role === "student" ? `<span class="badge badge--muted">Promedio general ${formatScore(summaries?.overall)}</span>` : ""}
-          ${user.role === "teacher" ? `<span class="badge badge--muted">Estudiantes matriculados ${assignedStudents}</span>` : ""}
-          ${user.role === "admin" ? `<span class="badge badge--muted">Calificaciones ${visibleGrades.length}</span>` : ""}
         </div>
       </div>
     </section>
     <section class="card" style="margin-top: 18px;">
       <div class="card__header">
         <div>
-          <h2 class="card__title">Cursos disponibles</h2>
-          <p class="card__subtitle">Selecciona un curso para ver sus clases y promedios.</p>
+          <h2 class="card__title">Acciones rápidas</h2>
+          <p class="card__subtitle">Empieza desde aquí sin navegar pantallas innecesarias.</p>
         </div>
       </div>
       <div class="card__body">
+        <div class="grid grid--cards">
+          <div class="list__item">
+            <div class="list__title">${lucideIcon("users")} Personas</div>
+            <div class="list__meta">Gestiona estudiantes, docentes y administradores.</div>
+            ${user.role === "admin" ? '<button class="btn btn--gold" data-view="users" type="button">Abrir usuarios</button>' : ''}
+          </div>
+          <div class="list__item">
+            <div class="list__title">${lucideIcon("book-open")} Cursos</div>
+            <div class="list__meta">Crear cursos, asignar docente y ordenar temario.</div>
+            ${(user.role === "admin" || user.role === "teacher") ? '<button class="btn btn--gold" data-view="courses" type="button">Abrir cursos</button>' : ''}
+          </div>
+          <div class="list__item">
+            <div class="list__title">${lucideIcon("clipboard-list")} Notas</div>
+            <div class="list__meta">Registrar, revisar y completar calificaciones.</div>
+            ${(user.role === "admin" || user.role === "teacher") ? '<button class="btn btn--gold" data-view="grades" type="button">Abrir calificaciones</button>' : '<button class="btn btn--gold" data-view="notes" type="button">Ver mis notas</button>'}
+          </div>
+        </div>
         <div class="course-tabs">
-          ${visible.map((course) => `<button class="${selectedCourse?.id === course.id ? "is-active" : ""}" data-course="${course.id}">${course.name}</button>`).join("")}
+          ${visible.map((course) => `<button class="${selectedCourse?.id === course.id ? "is-active" : ""}" data-course="${course.id}">${lucideIcon(normalizeCourseIcon(course.icon, course.id, course.name))} ${course.name}</button>`).join("")}
         </div>
         ${selectedCourse ? courseSnapshot(selectedCourse, user) : '<p class="muted" style="margin-top: 16px;">No hay cursos asignados a este usuario.</p>'}
       </div>
@@ -1383,7 +1670,7 @@ function courseSnapshot(course, user) {
   return `
     <div class="grid" style="margin-top: 16px;">
       <div class="list__item">
-        <div class="list__title">${course.name}</div>
+        <div class="list__title">${lucideIcon(normalizeCourseIcon(course.icon, course.id, course.name))} ${course.name}</div>
         <div class="list__meta">${course.description || "Sin descripción."}</div>
       </div>
       <div class="split">
@@ -1418,6 +1705,7 @@ function usersView() {
       <div class="card__body">
         <form class="form" data-form="save-user">
           <input type="hidden" name="userId" value="${selectedUser?.id || ""}" />
+          <input type="hidden" name="photoData" value="${escapeAttr(selectedUser?.photo || "")}" data-photo-data />
           <div class="field">
             <label>Rol</label>
             <select name="role" data-user-role-select>
@@ -1428,15 +1716,49 @@ function usersView() {
           </div>
           <div class="field" data-role-field="document">
             <label>Documento de identidad</label>
-            <input name="documentId" value="${escapeHtml(selectedUser?.documentId || "")}" placeholder="1234567890 o 1.234.567.890" inputmode="numeric" data-document-id />
+            <input name="documentId" value="${escapeHtml(selectedUser?.documentId || "")}" inputmode="numeric" data-document-id />
             <div class="helper">Se formatea con puntos (1.234.567). Usuario y contraseña por defecto = documento sin puntos.</div>
+          </div>
+          <div class="split">
+            <div class="field">
+              <label>Foto del estudiante</label>
+              <input type="file" accept="image/*" data-photo-file />
+              <div class="helper">Puedes subir una imagen o usar la cámara.</div>
+            </div>
+            <div class="field">
+              <label>Vista previa</label>
+              <div class="student-photo-preview" data-photo-preview>
+                ${selectedUser?.photo ? `<img src="${escapeAttr(selectedUser.photo)}" alt="Foto del estudiante" />` : '<span class="muted">Sin foto</span>'}
+              </div>
+            </div>
+          </div>
+          <div class="field camera-field">
+            <label>Webcam</label>
+            <div class="camera-controls row">
+              <button class="btn btn--ghost" type="button" data-photo-camera-start>Activar cámara</button>
+              <button class="btn btn--ghost" type="button" data-photo-camera-capture>Tomar foto</button>
+              <button class="btn btn--ghost" type="button" data-photo-camera-stop>Apagar cámara</button>
+            </div>
+            <video class="camera-preview" data-photo-camera autoplay playsinline muted hidden></video>
           </div>
           <div class="field"><label>Nombre completo</label><input name="fullName" value="${escapeHtml(selectedUser?.fullName || "")}" required /></div>
           <div class="field"><label>Usuario</label><input name="username" value="${escapeHtml(selectedUser?.username || "")}" required autocomplete="off" /></div>
           <div class="field"><label>Contraseña</label><input name="password" type="text" value="${escapeHtml(selectedUser?.password || "")}" required minlength="4" autocomplete="off" /></div>
           <div class="split">
-            <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(selectedUser?.email || "")}" placeholder="opcional" /></div>
-            <div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(selectedUser?.phone || "")}" placeholder="opcional" /></div>
+            <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(selectedUser?.email || "")}" /></div>
+            <div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(selectedUser?.phone || "")}" /></div>
+          </div>
+          <div class="split">
+            <div class="field"><label>Fecha de nacimiento</label><input name="birthDate" type="date" value="${escapeHtml(selectedUser?.birthDate || "")}" /></div>
+            <div class="field"><label>Dirección</label><input name="address" value="${escapeHtml(selectedUser?.address || "")}" /></div>
+          </div>
+          <div class="split">
+            <div class="field"><label>Acudiente</label><input name="guardianName" value="${escapeHtml(selectedUser?.guardianName || "")}" /></div>
+            <div class="field"><label>Contacto de emergencia</label><input name="emergencyContact" value="${escapeHtml(selectedUser?.emergencyContact || "")}" /></div>
+          </div>
+          <div class="split">
+            <div class="field"><label>Teléfono de emergencia</label><input name="emergencyPhone" value="${escapeHtml(selectedUser?.emergencyPhone || "")}" /></div>
+            <div class="field"><label>Observaciones de salud</label><input name="healthInfo" value="${escapeHtml(selectedUser?.healthInfo || "")}" /></div>
           </div>
           <div class="field" data-role-field="course" style="${initialRole === "admin" ? "display:none;" : ""}">
             <label data-course-label>${initialRole === "teacher" ? "Curso a asignar (un docente por curso)" : "Curso a matricular"}</label>
@@ -1521,8 +1843,13 @@ function renderEnrollExtraCourses() {
                 return `
                   <tr>
                     <td>
+                      <div class="row" style="align-items: center;">
+                        <div class="student-mini-photo">${student.photo ? `<img src="${escapeAttr(student.photo)}" alt="Foto de ${escapeHtml(student.fullName)}" />` : ""}</div>
+                        <div>
                       <div class="list__title">${escapeHtml(student.fullName)}</div>
                       <div class="list__meta">@${escapeHtml(student.username)}</div>
+                        </div>
+                      </div>
                     </td>
                     <td>${escapeHtml(student.documentId || "Sin documento")}</td>
                     <td>
@@ -1572,8 +1899,15 @@ function coursesView(user, selectedCourse, visible) {
         <div class="card__body">
           <form class="form" data-form="save-course">
             <input type="hidden" name="courseId" value="${editingCourse?.id || ""}" />
-            <div class="field"><label>Nombre del curso</label><input name="name" value="${escapeHtml(editingCourse?.name || "")}" required /></div>
-            <div class="field"><label>Descripción</label><textarea name="description" placeholder="Breve descripción">${escapeHtml(editingCourse?.description || "")}</textarea></div>
+            <div class="split">
+              <div class="field"><label>Icono del curso</label>
+                <select name="icon">
+                  ${COURSE_ICON_NAMES.map((icon) => `<option value="${icon}" ${normalizeCourseIcon(editingCourse?.icon, editingCourse?.id, editingCourse?.name) === icon ? "selected" : ""}>${COURSE_ICON_MAP[icon].label}</option>`).join("")}
+                </select>
+              </div>
+              <div class="field"><label>Nombre del curso</label><input name="name" value="${escapeHtml(editingCourse?.name || "")}" required /></div>
+            </div>
+            <div class="field"><label>Descripción</label><textarea name="description">${escapeHtml(editingCourse?.description || "")}</textarea></div>
             <div class="field">
               <label>Docente a cargo</label>
               <select name="teacherId">
@@ -1616,7 +1950,7 @@ function coursesView(user, selectedCourse, visible) {
                 return `
                 <tr>
                   <td>
-                    <div class="list__title">${escapeHtml(entry.name)}</div>
+                    <div class="list__title">${lucideIcon(normalizeCourseIcon(entry.icon, entry.id, entry.name))} ${escapeHtml(entry.name)}</div>
                     <div class="list__meta">${entry.items.length} clases · ${entry.studentIds.length} estudiantes</div>
                   </td>
                   <td>${escapeHtml(teacherName)}</td>
@@ -1645,13 +1979,13 @@ function coursesView(user, selectedCourse, visible) {
       </div>
       <div class="card__body">
         <div class="course-tabs">
-          ${visible.map((entry) => `<button class="${course?.id === entry.id ? "is-active" : ""}" data-course="${entry.id}">${entry.name}</button>`).join("")}
+          ${visible.map((entry) => `<button class="${course?.id === entry.id ? "is-active" : ""}" data-course="${entry.id}">${lucideIcon(normalizeCourseIcon(entry.icon, entry.id, entry.name))} ${entry.name}</button>`).join("")}
         </div>
         ${course ? `
           <div class="grid" style="margin-top: 16px;">
             <div class="split">
               <div class="list__item">
-                <div class="list__title">${course.name}</div>
+                <div class="list__title">${lucideIcon(normalizeCourseIcon(course.icon, course.id, course.name))} ${course.name}</div>
                 <div class="list__meta">${course.description || "Sin descripción."}</div>
               </div>
               <div class="list__item">
@@ -1676,7 +2010,7 @@ function coursesView(user, selectedCourse, visible) {
                       <td data-course-item-order>${index + 1}</td>
                       <td>
                         <input type="hidden" name="itemId[]" value="${item.id}" />
-                        <input name="itemTitle[]" value="${escapeHtml(item.title)}" placeholder="Título de clase" />
+                        <input name="itemTitle[]" value="${escapeHtml(item.title)}" aria-label="Título de clase" />
                       </td>
                       <td>
                         <select name="itemKind[]">
@@ -1755,7 +2089,7 @@ function gradesView(user, selectedCourse, visible) {
                           ${pending ? ' <span class="badge" style="border-color: rgba(255,123,123,0.4); background: rgba(255,123,123,0.12); color: #ffb4b4;">Sin nota</span>' : ""}
                         </td>
                         <td>${item.kind === "practice" ? "Práctica / brigada" : "Tema / clase"}</td>
-                        <td><input name="notesText[]" inputmode="decimal" value="${scoreValue === "--" ? "" : escapeHtml(scoreValue)}" placeholder="0.0 – 5.0" /></td>
+                        <td><input name="notesText[]" inputmode="decimal" value="${scoreValue === "--" ? "" : escapeHtml(scoreValue)}" aria-label="Nota" /></td>
                       </tr>
                     `;
                   }).join("") : `<tr><td colspan="4" class="muted">Selecciona un curso para ver su temario.</td></tr>`}
@@ -1789,7 +2123,7 @@ function gradesView(user, selectedCourse, visible) {
       </div>
       <div class="card__body">
         <div class="course-tabs">
-          ${teacherCourses.map((entry) => `<button class="${course?.id === entry.id ? "is-active" : ""}" data-course="${entry.id}">${entry.name}</button>`).join("")}
+          ${teacherCourses.map((entry) => `<button class="${course?.id === entry.id ? "is-active" : ""}" data-course="${entry.id}">${lucideIcon(normalizeCourseIcon(entry.icon, entry.id, entry.name))} ${entry.name}</button>`).join("")}
         </div>
       </div>
     </section>
@@ -1869,7 +2203,7 @@ function studentView(user, visible) {
             <div class="list__item">
               <div class="row" style="justify-content: space-between;">
                 <div>
-                  <div class="list__title">${course.name}</div>
+                  <div class="list__title">${lucideIcon(normalizeCourseIcon(course.icon, course.id, course.name))} ${course.name}</div>
                   <div class="list__meta">Temas ${formatScore(summary.topicAverage)} · Prácticas ${formatScore(summary.practiceAverage)} · Final ${formatScore(summary.finalAverage)}</div>
                 </div>
                 <span class="badge">${summary.gradedCount}/${summary.totalCount}</span>
@@ -1889,7 +2223,7 @@ function studentView(user, visible) {
       </div>
       <div class="card__body">
         <div class="course-tabs">
-          ${visible.map((course) => `<button class="${ui.courseId === course.id ? "is-active" : ""}" data-course="${course.id}">${course.name}</button>`).join("")}
+          ${visible.map((course) => `<button class="${ui.courseId === course.id ? "is-active" : ""}" data-course="${course.id}">${lucideIcon(normalizeCourseIcon(course.icon, course.id, course.name))} ${course.name}</button>`).join("")}
         </div>
         ${visible.map((course) => `<div style="margin-top: 16px;">${studentCourseDetail(course, user)}</div>`).join("")}
       </div>
@@ -1904,7 +2238,7 @@ function studentCourseDetail(course, user) {
       <div class="list__item">
         <div class="row" style="justify-content: space-between;">
           <div>
-            <div class="list__title">${course.name}</div>
+            <div class="list__title">${lucideIcon(normalizeCourseIcon(course.icon, course.id, course.name))} ${course.name}</div>
             <div class="list__meta">${course.description || "Sin descripción."}</div>
           </div>
           <span class="badge">Nota final ${formatScore(summary.finalAverage)}</span>
@@ -2113,7 +2447,7 @@ function courseItemRowMarkup(item = {}, index = 0) {
       <td data-course-item-order>${index + 1}</td>
       <td>
         <input type="hidden" name="itemId[]" value="${escapeHtml(item.id || "")}" />
-        <input name="itemTitle[]" value="${escapeHtml(item.title || "")}" placeholder="Título de clase" />
+        <input name="itemTitle[]" value="${escapeHtml(item.title || "")}" aria-label="Título de clase ${index + 1}" />
       </td>
       <td>
         <select name="itemKind[]">
@@ -2177,6 +2511,7 @@ function bindEvents() {
     button.addEventListener("click", () => setCourse(button.dataset.course));
   });
 
+  app.querySelectorAll("[data-action='toggle-theme']").forEach((button) => button.addEventListener("click", toggleTheme));
   app.querySelectorAll("[data-action='logout']").forEach((button) => button.addEventListener("click", logout));
   app.querySelectorAll("[data-action='reset-demo']").forEach((button) => button.addEventListener("click", resetDemo));
   app.querySelectorAll("[data-action='quick-login']").forEach((button) => {
@@ -2286,6 +2621,9 @@ function bindEvents() {
   app.querySelectorAll("[data-action='export-json']").forEach((button) => {
     button.addEventListener("click", exportDbJson);
   });
+  app.querySelectorAll("[data-action='export-excel']").forEach((button) => {
+    button.addEventListener("click", exportDbExcel);
+  });
   app.querySelectorAll("[data-action='import-json']").forEach((button) => {
     button.addEventListener("click", () => {
       const input = document.createElement("input");
@@ -2337,9 +2675,14 @@ function bindEvents() {
   app.querySelectorAll("[data-document-id]").forEach((input) => {
     bindDocumentIdField(input);
   });
+
+  app.querySelectorAll("[data-form='save-user']").forEach((form) => {
+    bindPhotoField(form);
+  });
 }
 
 function render() {
+  applyTheme();
   const user = currentUser();
   if (!user) {
     app.innerHTML = loginView();
@@ -2349,4 +2692,8 @@ function render() {
   bindEvents();
 }
 
+window.addEventListener("beforeunload", persistDb);
+window.addEventListener("pagehide", persistDb);
+
+applyTheme();
 render();

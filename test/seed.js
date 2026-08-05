@@ -35,6 +35,7 @@ window.SCHOOL_SEED = {
     {
       id: "barberia",
       name: "Barbería",
+      icon: "scissors",
       description: "Programa de barbería con clases teóricas, prácticas y brigadas.",
       lessons: [
         "Historia de la barbería: evolución y rol del barbero moderno.",
@@ -75,6 +76,7 @@ window.SCHOOL_SEED = {
     {
       id: "cejas-y-pestanas",
       name: "Cejas y Pestañas",
+      icon: "image",
       description: "Temario de pestañas con visajismo, teoría y prácticas en cabezote y modelo real.",
       lessons: [
         "Presentación.",
@@ -108,6 +110,7 @@ window.SCHOOL_SEED = {
     {
       id: "estetica-facial-corporal",
       name: "Estética Facial y Corporal",
+      icon: "award",
       description: "Programa integral de estética facial, corporal, depilación, masajes y emprendimiento.",
       lessons: [
         "Inducción al curso, presentación, perfil de la esteticista y ética profesional.",
@@ -140,6 +143,7 @@ window.SCHOOL_SEED = {
     {
       id: "maquillaje-profesional",
       name: "Maquillaje Profesional",
+      icon: "palette",
       description: "Temario completo de maquillaje social, editorial, nupcial, fantasía y final teórico-práctico.",
       lessons: [
         "Historia del maquillaje. Ética y presentación profesional. Bioseguridad e higiene.",
