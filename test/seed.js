@@ -4,7 +4,7 @@ window.SCHOOL_SEED = {
       id: "admin-demo",
       fullName: "Administrador",
       username: "admin",
-      password: "Admin123!",
+      password: "1128467570",
       role: "admin",
       documentId: "",
       email: "",
